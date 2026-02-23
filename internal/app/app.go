@@ -15,7 +15,8 @@ import (
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/internal/bootstrap"
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/internal/server"
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/config"
-	pb "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/pb"
+	oauthpb "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/pb/accelbyte-asyncapi/iam/oauth/v1"
+	statistic "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/pb/accelbyte-asyncapi/social/statistic/v1"
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/service"
 	"google.golang.org/grpc"
 )
@@ -88,18 +89,21 @@ func New(ctx context.Context) (*Application, error) {
 	}
 	app.grpcServer = grpcServer
 
-	// Register Telemetry Service
-	telemetrySvc := service.NewTelemetryService(
+	// Register StatItemUpdated event handler
+	statItemUpdatedSvc := service.NewStatItemUpdatedService(
 		bootstrap.GetNamespace(),
-		iamServices.TokenRepo,
-		iamServices.ConfigRepo,
-		iamServices.RefreshRepo,
-		app.processors.UserBehavior,
-		app.processors.Gameplay,
-		app.processors.Performance,
+		app.processors.StatItemUpdated,
 		app.logger,
 	)
-	pb.RegisterServiceServer(grpcServer, telemetrySvc)
+	statistic.RegisterStatisticStatItemUpdatedServiceServer(grpcServer, statItemUpdatedSvc)
+
+	// Register OauthTokenGenerated event handler
+	oauthTokenGeneratedSvc := service.NewOauthTokenGeneratedService(
+		bootstrap.GetNamespace(),
+		app.processors.OauthTokenGenerated,
+		app.logger,
+	)
+	oauthpb.RegisterOauthTokenOauthTokenGeneratedServiceServer(grpcServer, oauthTokenGeneratedSvc)
 
 	return app, nil
 }

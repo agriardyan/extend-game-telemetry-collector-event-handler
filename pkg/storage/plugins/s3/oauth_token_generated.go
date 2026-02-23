@@ -20,38 +20,35 @@ import (
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/storage"
 )
 
-// GameplayPluginConfig holds S3 configuration for the gameplay plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// buckets, prefixes, or regions per event category.
-type GameplayPluginConfig struct {
+// OauthTokenGeneratedPluginConfig holds S3 configuration for the oauth_token_generated plugin.
+type OauthTokenGeneratedPluginConfig struct {
 	Bucket   string // required
 	Prefix   string // default "telemetry"
 	Region   string // default "us-east-1"
 	Endpoint string // optional - for MinIO or custom S3-compatible endpoints
 }
 
-// GameplayPlugin stores gameplay telemetry events as JSON files in Amazon S3.
-// It manages its own AWS client and is fully independent of sibling S3 plugins.
-type GameplayPlugin struct {
-	cfg    GameplayPluginConfig
+// OauthTokenGeneratedPlugin stores oauth token generated events as JSON files in Amazon S3.
+type OauthTokenGeneratedPlugin struct {
+	cfg    OauthTokenGeneratedPluginConfig
 	client *awss3.Client
 	logger *slog.Logger
 }
 
-// NewGameplayPlugin creates an S3 plugin for gameplay events.
-func NewGameplayPlugin(cfg GameplayPluginConfig) storage.StoragePlugin[*events.GameplayEvent] {
+// NewOauthTokenGeneratedPlugin creates an S3 plugin for oauth_token_generated events.
+func NewOauthTokenGeneratedPlugin(cfg OauthTokenGeneratedPluginConfig) storage.StoragePlugin[*events.OauthTokenGeneratedEvent] {
 	if cfg.Prefix == "" {
 		cfg.Prefix = "telemetry"
 	}
 	if cfg.Region == "" {
 		cfg.Region = "us-east-1"
 	}
-	return &GameplayPlugin{cfg: cfg}
+	return &OauthTokenGeneratedPlugin{cfg: cfg}
 }
 
-func (p *GameplayPlugin) Name() string { return "s3:gameplay" }
+func (p *OauthTokenGeneratedPlugin) Name() string { return "s3:oauth_token_generated" }
 
-func (p *GameplayPlugin) Initialize(ctx context.Context) error {
+func (p *OauthTokenGeneratedPlugin) Initialize(ctx context.Context) error {
 	p.logger = slog.Default().With("plugin", p.Name())
 
 	if p.cfg.Bucket == "" {
@@ -63,11 +60,10 @@ func (p *GameplayPlugin) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	// Configure S3 client with custom endpoint for MinIO or S3-compatible services
 	if p.cfg.Endpoint != "" {
 		p.client = awss3.NewFromConfig(awsCfg, func(o *awss3.Options) {
 			o.BaseEndpoint = aws.String(p.cfg.Endpoint)
-			o.UsePathStyle = true // MinIO requires path-style addressing
+			o.UsePathStyle = true
 		})
 		p.logger.Info("s3 plugin initialized with custom endpoint",
 			"bucket", p.cfg.Bucket, "prefix", p.cfg.Prefix, "region", p.cfg.Region, "endpoint", p.cfg.Endpoint)
@@ -85,15 +81,15 @@ func (p *GameplayPlugin) Initialize(ctx context.Context) error {
 // Implement custom filtering logic here. Return false to skip an event.
 // For example, filter out events from certain namespaces or users.
 // ------------------------------------------------------------------------------
-func (p *GameplayPlugin) Filter(_ *events.GameplayEvent) bool { return true }
+func (p *OauthTokenGeneratedPlugin) Filter(_ *events.OauthTokenGeneratedEvent) bool { return true }
 
 // WriteBatch serializes the batch to JSON and uploads it to S3.
 // ------------------------------------------------------------------------------
 // DEVELOPER NOTE:
 // Customize transform logic here to reshape or enrich events before upload.
-// The S3 key format is: {prefix}/gameplay/{namespace}/year=YYYY/month=MM/day=DD/{ts}.json
+// The S3 key format is: {prefix}/oauth_token_generated/{namespace}/year=YYYY/month=MM/day=DD/{ts}.json
 // ------------------------------------------------------------------------------
-func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.GameplayEvent) (int, error) {
+func (p *OauthTokenGeneratedPlugin) WriteBatch(ctx context.Context, evts []*events.OauthTokenGeneratedEvent) (int, error) {
 	if len(evts) == 0 {
 		return 0, nil
 	}
@@ -109,7 +105,7 @@ func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.Gameplay
 	}
 
 	now := time.Now().UTC()
-	key := fmt.Sprintf("%s/gameplay/%s/year=%d/month=%02d/day=%02d/%d.json",
+	key := fmt.Sprintf("%s/oauth_token_generated/%s/year=%d/month=%02d/day=%02d/%d.json",
 		p.cfg.Prefix, evts[0].Namespace,
 		now.Year(), now.Month(), now.Day(), now.UnixMilli())
 
@@ -132,13 +128,12 @@ func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.Gameplay
 	return len(documents), nil
 }
 
-func (p *GameplayPlugin) Close() error {
-	// The AWS S3 client does not hold persistent connections and requires no cleanup.
+func (p *OauthTokenGeneratedPlugin) Close() error {
 	p.logger.Info("s3 plugin closed")
 	return nil
 }
 
-func (p *GameplayPlugin) HealthCheck(ctx context.Context) error {
+func (p *OauthTokenGeneratedPlugin) HealthCheck(ctx context.Context) error {
 	_, err := p.client.HeadBucket(ctx, &awss3.HeadBucketInput{
 		Bucket: aws.String(p.cfg.Bucket),
 	})

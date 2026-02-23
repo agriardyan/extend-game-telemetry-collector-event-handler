@@ -1,6 +1,6 @@
 ---
 name: add-plugin
-description: Scaffold a new storage plugin for the telemetry collector. Use when the user wants to add a new telemetry event type or a new storage backend.
+description: Scaffold a new storage plugin for the telemetry collector. Use when the user wants to handle a new AGS event type or add a new storage backend.
 disable-model-invocation: true
 argument-hint: [type <name> | backend <name>]
 allowed-tools: Read, Write, Edit, Glob, Grep, Bash
@@ -13,7 +13,7 @@ Scaffolds plugin code for this telemetry collector project.
 ## Usage
 
 ```
-/add-plugin type <name>      # New telemetry category across all existing backends
+/add-plugin type <name>      # New AGS event type across all existing backends
 /add-plugin backend <name>   # New storage backend for all existing event types
 ```
 
@@ -21,9 +21,14 @@ Scaffolds plugin code for this telemetry collector project.
 
 Parse the arguments:
 - First word (`type` or `backend`) — determines the mode
-- Second word — the name of event (e.g., `economy`, `big_query`)
+- Second word — the name in snake_case (e.g., `stat_item_deleted`, `big_query`)
 
 If arguments are missing or ambiguous, ask for clarification before proceeding.
+
+> **This is an Extend Event Handler app.** Event schemas come from AccelByte Gaming Services.
+> Developers must NOT define their own proto messages. All proto files come from the
+> [AGS event catalogue](https://docs.accelbyte.io/gaming-services/knowledge-base/api-events/)
+> (source: https://github.com/AccelByte/accelbyte-api-proto/tree/main/asyncapi).
 
 ---
 
@@ -41,9 +46,9 @@ Existing backends:
 !`ls pkg/storage/plugins/`
 ```
 
-Plugin switch cases currently in main.go:
+Current bootstrap plugin cases:
 ```
-!`grep -n 'case "' main.go`
+!`grep -n 'case "' internal/bootstrap/plugins.go`
 ```
 
 Read [CONVENTIONS.md](CONVENTIONS.md) before writing any code. It has the naming rules and
@@ -55,115 +60,180 @@ file patterns this project enforces.
 
 > **When**: first argument is `type`
 >
-> **Example**: `/add-plugin type economy` — adds economy telemetry support across all backends
+> **Example**: `/add-plugin type stat_item_deleted` — adds stat_item_deleted event handling across all backends
 
-### Step 1 — Read reference files
+### Step 1 — Verify the AGS proto
 
-Read these **four files in full** before writing anything:
+Check whether the proto for this event already exists under `pkg/proto/accelbyte-asyncapi/`:
 
 ```
-pkg/events/gameplay.go
-pkg/storage/plugins/postgres/gameplay.go
-pkg/storage/plugins/mongodb/gameplay.go
-pkg/storage/plugins/s3/gameplay.go
-pkg/storage/plugins/kafka/gameplay.go
+!`find pkg/proto/accelbyte-asyncapi -name "*.proto" | head -20`
+```
+
+If the proto is not present, tell the user to copy it from
+https://github.com/AccelByte/accelbyte-api-proto/tree/main/asyncapi
+into the matching path under `pkg/proto/accelbyte-asyncapi/`, then run `./proto.sh` to
+regenerate Go code. Do not proceed until the generated `*_grpc.pb.go` exists.
+
+If the proto already exists, read the relevant `*_grpc.pb.go` to identify:
+- The server interface name (e.g., `StatisticStatItemDeletedServiceServer`)
+- The `OnMessage` method signature and its request message type (e.g., `*StatItemDeleted`)
+- The `Unimplemented*` embed struct name
+
+### Step 2 — Read reference files
+
+Read these **files in full** before writing anything:
+
+```
+pkg/events/stat_item_updated.go
+pkg/service/stat_item_updated.go
+pkg/storage/plugins/postgres/stat_item_updated.go
+pkg/storage/plugins/mongodb/stat_item_updated.go
+pkg/storage/plugins/s3/stat_item_updated.go
+pkg/storage/plugins/kafka/stat_item_updated.go
 ```
 
 These are your source of truth. Every file you create must follow the exact same structure,
-substituting only the type name.
+substituting only the type name and proto message fields.
 
-### Step 2 — Create the event wrapper
+Also read the bootstrap files to understand the current wiring:
+```
+internal/bootstrap/plugins.go
+internal/bootstrap/processor.go
+internal/bootstrap/deduplicator.go
+internal/app/app.go
+```
+
+### Step 3 — Create the event wrapper
 
 File: `pkg/events/<name>.go`
 
-Copy the structure of `pkg/events/gameplay.go` exactly. Change:
+Copy the structure of `pkg/events/stat_item_updated.go`. The event wrapper must:
+
+- Declare a struct with the event envelope fields (`ID`, `Version`, `Namespace`, `Name`,
+  `UserID`, `SessionID`, `Timestamp`, `ServerTimestamp`) and a typed `Payload` field.
+- If the AGS event's payload type is the same as an existing one (e.g., `StatItem`), reuse
+  the existing struct rather than defining a duplicate.
+- Implement `DeduplicationKey() string` — use fields that make the event unique in your domain.
+- Implement `ToDocument() map[string]interface{}` — flat map for JSON/BSON serialization.
+
+Key substitutions:
 
 | Original | Replace with |
 |----------|--------------|
-| `GameplayEvent` | `<Name>Event` (PascalCase) |
-| `*pb.CreateGameplayTelemetryRequest` | `*pb.Create<Name>TelemetryRequest` |
-| `"gameplay:"` prefix in `DeduplicationKey()` | `"<name>:"` |
-| `"gameplay"` in `ToDocument()["kind"]` | `"<name>"` |
+| `StatItemUpdatedEvent` | `<Name>Event` (PascalCase) |
+| `"stat_item_updated:"` prefix | `"<name>:"` |
+| `"stat_item_updated"` in `ToDocument()["kind"]` | `"<name>"` |
 
-> **Note**: The proto type `*pb.Create<Name>TelemetryRequest` may not exist yet if the
-> user has not added the proto definition. If it doesn't exist, use a `TODO` comment
-> and placeholder comment explaining where to fill it in. Tell the user to define the proto
-> first, then update the wrapper.
+### Step 4 — Create the gRPC service handler
 
-### Step 3 — Create backend plugin files
+File: `pkg/service/<name>.go`
 
-For each existing backend, create one plugin file. Use the gameplay plugin as template:
+Copy the structure of `pkg/service/stat_item_updated.go`. Change:
+
+| Original | Replace with |
+|----------|--------------|
+| `StatItemUpdatedService` | `<Name>Service` |
+| `UnimplementedStatisticStatItemUpdatedServiceServer` | Unimplemented struct from the generated grpc file |
+| `*statistic.StatItemUpdated` | The correct proto message type for this event |
+| `RegisterStatisticStatItemUpdatedServiceServer` | The correct Register function for this service |
+| All field mappings in `OnMessage` | Fields from the actual proto message |
+
+The handler must:
+1. Validate `req != nil`
+2. Use `req.Namespace` (fall back to `s.namespace` if empty)
+3. Set `UserID` from `req.UserId`
+4. Set `ServerTimestamp` to `time.Now().UnixMilli()`
+5. Map proto fields into the event wrapper struct
+6. Call `s.proc.Submit(event)` and return gRPC status errors on failure
+
+### Step 5 — Create backend plugin files
+
+For each existing backend, create one plugin file:
 
 | Create | Based on |
 |--------|----------|
-| `pkg/storage/plugins/postgres/<name>.go` | `pkg/storage/plugins/postgres/gameplay.go` |
-| `pkg/storage/plugins/mongodb/<name>.go` | `pkg/storage/plugins/mongodb/gameplay.go` |
-| `pkg/storage/plugins/s3/<name>.go` | `pkg/storage/plugins/s3/gameplay.go` |
-| `pkg/storage/plugins/kafka/<name>.go` | `pkg/storage/plugins/kafka/gameplay.go` |
+| `pkg/storage/plugins/postgres/<name>.go` | `pkg/storage/plugins/postgres/stat_item_updated.go` |
+| `pkg/storage/plugins/mongodb/<name>.go` | `pkg/storage/plugins/mongodb/stat_item_updated.go` |
+| `pkg/storage/plugins/s3/<name>.go` | `pkg/storage/plugins/s3/stat_item_updated.go` |
+| `pkg/storage/plugins/kafka/<name>.go` | `pkg/storage/plugins/kafka/stat_item_updated.go` |
 
 Substitutions for every file:
 
 | Original | Replace with |
 |----------|--------------|
-| `GameplayPlugin` | `<Name>Plugin` |
-| `GameplayPluginConfig` | `<Name>PluginConfig` |
-| `NewGameplayPlugin` | `New<Name>Plugin` |
-| `"postgres:gameplay"` / `"s3:gameplay"` / etc. | `"<backend>:<name>"` |
-| `"gameplay_events"` (default table/collection) | `"<name>_events"` |
-| `*events.GameplayEvent` | `*events.<Name>Event` |
-| `kind: "gameplay"` in Kafka headers | `kind: "<name>"` |
+| `StatItemUpdatedPlugin` | `<Name>Plugin` |
+| `StatItemUpdatedPluginConfig` | `<Name>PluginConfig` |
+| `NewStatItemUpdatedPlugin` | `New<Name>Plugin` |
+| `"postgres:stat_item_updated"` / etc. | `"<backend>:<name>"` |
+| `"stat_item_updated_events"` | `"<name>_events"` |
+| `*events.StatItemUpdatedEvent` | `*events.<Name>Event` |
+| `kind: "stat_item_updated"` in Kafka headers | `kind: "<name>"` |
+| `stat_item_updated/<namespace>/...` S3 key path | `<name>/<namespace>/...` |
 
-The S3 key path (`gameplay/<namespace>/year=...`) must also be updated to `<name>/<namespace>/...`.
+For Kafka: `compressionCodec` is defined in `stat_item_updated.go` in the kafka package.
+Do **not** add it again — just call it directly.
 
-For Kafka: the `compressionCodec` function already exists in `user_behavior.go` in the
-kafka package. Do **not** add it again to the new file — just call it directly.
+### Step 6 — Wire into bootstrap layer
 
-### Step 4 — Update main.go
+Make **surgical edits** — do not rewrite any file.
 
-Make **surgical edits** — do not rewrite main.go. Add the new type in three places:
+**A. `internal/bootstrap/plugins.go`**
 
-**A. Plugin slice declaration** (near the other three declarations):
+Add `<Name> []storage.StoragePlugin[*events.<Name>Event]` to `StoragePlugins`.
+
+Add `<Name>: []storage.StoragePlugin[*events.<Name>Event]{}` to the struct literal.
+
+Add `var <name>Plugin storage.StoragePlugin[*events.<Name>Event]` inside the loop's `var` block.
+
+Add plugin construction inside each backend `case`, mirroring the `siuPlugin` pattern.
+
+Add initialize, log, and append after the switch:
 ```go
-var <name>Plugins []storage.StoragePlugin[*events.<Name>Event]
-```
-
-**B. Plugin switch** (inside each backend `case`, add a line for the new plugin):
-```go
-// Inside each existing case block, add:
-<name>Plugin := <pkg>.New<Name>Plugin(<pkg>.<Name>PluginConfig{
-    // same fields as the corresponding gameplay config in that case
-})
-```
-
-Then initialize and append it alongside the other three:
-```go
-if err := <name>Plugin.Initialize(ctx); err != nil { ... }
-<name>Plugins = append(<name>Plugins, <name>Plugin)
-```
-
-**C. Processor + deduplicator** (after the loop, alongside the existing three):
-```go
-<name>Dedup := buildDeduplicator[*events.<Name>Event](appCfg, logger)
-<name>Proc  := processor.NewProcessor(processorCfg, <name>Plugins, <name>Dedup, logger)
-<name>Proc.Start()
-```
-
-Also add shutdown in the graceful-shutdown block:
-```go
-if err := <name>Proc.Shutdown(shutdownTimeout); err != nil {
-    logger.Error("<name> processor shutdown error", "error", err)
+if err := <name>Plugin.Initialize(ctx); err != nil {
+    return nil, err
 }
-if err := <name>Dedup.Close(); err != nil {
-    logger.Error("<name> deduplicator close error", "error", err)
-}
-for _, p := range <name>Plugins {
-    if err := p.Close(); err != nil {
-        logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
-    }
-}
+logger.Info("plugin initialized", "plugin", <name>Plugin.Name())
+plugins.<Name> = append(plugins.<Name>, <name>Plugin)
 ```
 
-### Step 5 — Build check
+Add noop fallback inside `if len(plugins.StatItemUpdated) == 0`.
+
+Add `"<name>", len(plugins.<Name>)` to the final `logger.Info` call.
+
+Add close loop in `CloseStoragePlugins`.
+
+**B. `internal/bootstrap/processor.go`**
+
+Add `<Name> *processor.Processor[*events.<Name>Event]` to `Processors`.
+
+Add `<Name>: processor.NewProcessor(processorCfg, plugins.<Name>, dedups.<Name>, logger)` to the struct literal.
+
+Add `procs.<Name>.Start()`.
+
+Add shutdown call in `ShutdownProcessors`.
+
+**C. `internal/bootstrap/deduplicator.go`**
+
+Add `<Name> dedup.Deduplicator[*events.<Name>Event]` to `Deduplicators`.
+
+Add `<Name>: buildDeduplicator[*events.<Name>Event](appCfg, logger)` to the struct literal.
+
+Add close call in `CloseDeduplicators`.
+
+**D. `internal/app/app.go`**
+
+Register the service after the existing service registrations:
+```go
+<name>Svc := service.New<Name>Service(
+    bootstrap.GetNamespace(),
+    app.processors.<Name>,
+    app.logger,
+)
+statistic.Register<ServiceName>Server(grpcServer, <name>Svc)
+```
+
+### Step 7 — Build check
 
 ```bash
 go build ./...
@@ -184,11 +254,14 @@ Report any errors and fix them before finishing.
 Read these files in full:
 
 ```
-pkg/storage/plugins/postgres/user_behavior.go
-pkg/storage/plugins/postgres/gameplay.go
-pkg/storage/plugins/postgres/performance.go
-main.go
+pkg/storage/plugins/postgres/stat_item_updated.go
+internal/bootstrap/plugins.go
 pkg/config/config.go
+```
+
+Also discover all current event types:
+```
+!`ls pkg/events/*.go | xargs -I{} basename {} .go | grep -v _test`
 ```
 
 ### Step 2 — Gather requirements
@@ -210,19 +283,13 @@ go get <library-import-path>
 
 ### Step 4 — Create the plugin package
 
-Create `pkg/storage/plugins/<name>/` with three files — one per event type:
+Create `pkg/storage/plugins/<name>/` with one file per existing event type.
 
-```
-pkg/storage/plugins/<name>/user_behavior.go
-pkg/storage/plugins/<name>/gameplay.go
-pkg/storage/plugins/<name>/performance.go
-```
+For each event type file, implement all six interface methods following the same structure as
+the Postgres plugins. Refer to [CONVENTIONS.md](CONVENTIONS.md) for the required DEVELOPER
+NOTE comment blocks on `Filter` and `transform`.
 
-For each file, implement all six interface methods. Follow the same structure as the Postgres
-plugins (they are the closest to a generic template). Refer to [CONVENTIONS.md](CONVENTIONS.md)
-for the DEVELOPER NOTE comment blocks that must appear on `Filter` and `transform`.
-
-The `Name()` method must return `"<backend>:<type>"` (e.g., `"bigquery:gameplay"`).
+The `Name()` method must return `"<backend>:<type>"` (e.g., `"bigquery:stat_item_updated"`).
 
 Each plugin file is self-contained with its own config struct, its own client, and its own
 `Initialize`/`Close` lifecycle.
@@ -242,14 +309,14 @@ type StorageConfig struct {
 }
 ```
 
-### Step 6 — Update main.go
+### Step 6 — Wire into bootstrap layer
+
+In `internal/bootstrap/plugins.go`:
 
 **A.** Add the import for the new package.
 
-**B.** Add a new `case "<name>":` block in the plugin switch, creating all three event-type
-plugins and assigning them to `ubPlugin`, `gpPlugin`, and `perfPlugin`.
-
-**C.** Update the plugin-ready log to include the new backend name if useful.
+**B.** Add a new `case "<name>":` block in the plugin switch. For each existing event type,
+create and assign its plugin variable (e.g., `siuPlugin`, `sidPlugin`, etc.).
 
 ### Step 7 — Build check
 
@@ -267,5 +334,5 @@ After all files are created and the build passes, summarize what was created:
 
 - List every new file
 - List every modified file with a one-line description of what changed
-- Note any manual steps the user must take (e.g., proto definition, table creation,
+- Note any manual steps the user must take (e.g., proto generation, table creation,
   environment variables to set)

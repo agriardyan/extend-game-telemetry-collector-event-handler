@@ -17,10 +17,8 @@ import (
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/storage"
 )
 
-// UserBehaviorPluginConfig holds Kafka configuration for the user behavior plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// broker clusters, topics, or compression settings per event category.
-type UserBehaviorPluginConfig struct {
+// StatItemUpdatedPluginConfig holds Kafka configuration for the stat_item_updated plugin.
+type StatItemUpdatedPluginConfig struct {
 	Brokers       []string
 	Topic         string
 	Compression   string // "snappy" (default), "gzip", "lz4", "zstd"
@@ -28,22 +26,21 @@ type UserBehaviorPluginConfig struct {
 	FlushInterval time.Duration
 }
 
-// UserBehaviorPlugin streams user behavior telemetry events to a Kafka topic.
-// It manages its own kafka.Writer and is fully independent of sibling Kafka plugins.
-type UserBehaviorPlugin struct {
-	cfg    UserBehaviorPluginConfig
+// StatItemUpdatedPlugin streams stat item updated events to a Kafka topic.
+type StatItemUpdatedPlugin struct {
+	cfg    StatItemUpdatedPluginConfig
 	writer *kafkago.Writer
 	logger *slog.Logger
 }
 
-// NewUserBehaviorPlugin creates a Kafka plugin for user behavior events.
-func NewUserBehaviorPlugin(cfg UserBehaviorPluginConfig) storage.StoragePlugin[*events.UserBehaviorEvent] {
-	return &UserBehaviorPlugin{cfg: cfg}
+// NewStatItemUpdatedPlugin creates a Kafka plugin for stat_item_updated events.
+func NewStatItemUpdatedPlugin(cfg StatItemUpdatedPluginConfig) storage.StoragePlugin[*events.StatItemUpdatedEvent] {
+	return &StatItemUpdatedPlugin{cfg: cfg}
 }
 
-func (p *UserBehaviorPlugin) Name() string { return "kafka:user_behavior" }
+func (p *StatItemUpdatedPlugin) Name() string { return "kafka:stat_item_updated" }
 
-func (p *UserBehaviorPlugin) Initialize(_ context.Context) error {
+func (p *StatItemUpdatedPlugin) Initialize(_ context.Context) error {
 	p.logger = slog.Default().With("plugin", p.Name())
 	if p.cfg.Compression == "" {
 		p.cfg.Compression = "snappy"
@@ -62,21 +59,27 @@ func (p *UserBehaviorPlugin) Initialize(_ context.Context) error {
 	return nil
 }
 
+func compressionCodec(name string) kafkago.Compression {
+	switch name {
+	case "gzip":
+		return kafkago.Gzip
+	case "lz4":
+		return kafkago.Lz4
+	case "zstd":
+		return kafkago.Zstd
+	default:
+		return kafkago.Snappy
+	}
+}
+
 // Filter determines if an event should be processed by this plugin.
 // ------------------------------------------------------------------------------
 // DEVELOPER NOTE:
 // Implement custom filtering logic here. Return false to skip an event.
-// For example, filter out events from certain namespaces or users.
 // ------------------------------------------------------------------------------
-func (p *UserBehaviorPlugin) Filter(_ *events.UserBehaviorEvent) bool { return true }
+func (p *StatItemUpdatedPlugin) Filter(_ *events.StatItemUpdatedEvent) bool { return true }
 
-// transform serializes a UserBehaviorEvent to JSON for the Kafka message value.
-// ------------------------------------------------------------------------------
-// DEVELOPER NOTE:
-// Customize this method to reshape or enrich events before publishing.
-// You can also change the message key strategy (currently partitioned by user_id).
-// ------------------------------------------------------------------------------
-func (p *UserBehaviorPlugin) transform(e *events.UserBehaviorEvent) ([]byte, error) {
+func (p *StatItemUpdatedPlugin) transform(e *events.StatItemUpdatedEvent) ([]byte, error) {
 	data, err := json.Marshal(e.ToDocument())
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal event: %w", err)
@@ -84,7 +87,7 @@ func (p *UserBehaviorPlugin) transform(e *events.UserBehaviorEvent) ([]byte, err
 	return data, nil
 }
 
-func (p *UserBehaviorPlugin) WriteBatch(ctx context.Context, evts []*events.UserBehaviorEvent) (int, error) {
+func (p *StatItemUpdatedPlugin) WriteBatch(ctx context.Context, evts []*events.StatItemUpdatedEvent) (int, error) {
 	if len(evts) == 0 {
 		return 0, nil
 	}
@@ -102,7 +105,7 @@ func (p *UserBehaviorPlugin) WriteBatch(ctx context.Context, evts []*events.User
 			Time:  time.UnixMilli(e.ServerTimestamp),
 			Headers: []kafkago.Header{
 				{Key: "namespace", Value: []byte(e.Namespace)},
-				{Key: "kind", Value: []byte("user_behavior")},
+				{Key: "kind", Value: []byte("stat_item_updated")},
 			},
 		})
 	}
@@ -119,7 +122,7 @@ func (p *UserBehaviorPlugin) WriteBatch(ctx context.Context, evts []*events.User
 	return len(messages), nil
 }
 
-func (p *UserBehaviorPlugin) Close() error {
+func (p *StatItemUpdatedPlugin) Close() error {
 	p.logger.Info("kafka plugin closing", "topic", p.cfg.Topic)
 	if p.writer != nil {
 		return p.writer.Close()
@@ -127,7 +130,7 @@ func (p *UserBehaviorPlugin) Close() error {
 	return nil
 }
 
-func (p *UserBehaviorPlugin) HealthCheck(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) HealthCheck(ctx context.Context) error {
 	if len(p.cfg.Brokers) == 0 {
 		return fmt.Errorf("no kafka brokers configured")
 	}
@@ -144,27 +147,4 @@ func (p *UserBehaviorPlugin) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("topic %s has no partitions", p.cfg.Topic)
 	}
 	return nil
-}
-
-// compressionCodec maps a codec name string to kafka.Compression.
-//
-// NOTE: This function is specific to the Kafka transport and is intentionally
-// kept within this package rather than in a shared file. Go's package system
-// scopes functions to the package (not the file), so this single definition
-// is available to all telemetry-type plugins in this package. If you add a
-// new telemetry type Kafka plugin, it can use this function directly — no
-// import or copy needed.
-func compressionCodec(name string) kafkago.Compression {
-	switch name {
-	case "gzip":
-		return kafkago.Gzip
-	case "snappy":
-		return kafkago.Snappy
-	case "lz4":
-		return kafkago.Lz4
-	case "zstd":
-		return kafkago.Zstd
-	default:
-		return kafkago.Snappy
-	}
 }

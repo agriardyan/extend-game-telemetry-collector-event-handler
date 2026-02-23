@@ -17,10 +17,8 @@ import (
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/storage"
 )
 
-// PerformancePluginConfig holds Kafka configuration for the performance plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// broker clusters, topics, or compression settings per event category.
-type PerformancePluginConfig struct {
+// OauthTokenGeneratedPluginConfig holds Kafka configuration for the oauth_token_generated plugin.
+type OauthTokenGeneratedPluginConfig struct {
 	Brokers       []string
 	Topic         string
 	Compression   string // "snappy" (default), "gzip", "lz4", "zstd"
@@ -28,22 +26,21 @@ type PerformancePluginConfig struct {
 	FlushInterval time.Duration
 }
 
-// PerformancePlugin streams performance telemetry events to a Kafka topic.
-// It manages its own kafka.Writer and is fully independent of sibling Kafka plugins.
-type PerformancePlugin struct {
-	cfg    PerformancePluginConfig
+// OauthTokenGeneratedPlugin streams oauth token generated events to a Kafka topic.
+type OauthTokenGeneratedPlugin struct {
+	cfg    OauthTokenGeneratedPluginConfig
 	writer *kafkago.Writer
 	logger *slog.Logger
 }
 
-// NewPerformancePlugin creates a Kafka plugin for performance events.
-func NewPerformancePlugin(cfg PerformancePluginConfig) storage.StoragePlugin[*events.PerformanceEvent] {
-	return &PerformancePlugin{cfg: cfg}
+// NewOauthTokenGeneratedPlugin creates a Kafka plugin for oauth_token_generated events.
+func NewOauthTokenGeneratedPlugin(cfg OauthTokenGeneratedPluginConfig) storage.StoragePlugin[*events.OauthTokenGeneratedEvent] {
+	return &OauthTokenGeneratedPlugin{cfg: cfg}
 }
 
-func (p *PerformancePlugin) Name() string { return "kafka:performance" }
+func (p *OauthTokenGeneratedPlugin) Name() string { return "kafka:oauth_token_generated" }
 
-func (p *PerformancePlugin) Initialize(_ context.Context) error {
+func (p *OauthTokenGeneratedPlugin) Initialize(_ context.Context) error {
 	p.logger = slog.Default().With("plugin", p.Name())
 	if p.cfg.Compression == "" {
 		p.cfg.Compression = "snappy"
@@ -68,15 +65,9 @@ func (p *PerformancePlugin) Initialize(_ context.Context) error {
 // Implement custom filtering logic here. Return false to skip an event.
 // For example, filter out events from certain namespaces or users.
 // ------------------------------------------------------------------------------
-func (p *PerformancePlugin) Filter(_ *events.PerformanceEvent) bool { return true }
+func (p *OauthTokenGeneratedPlugin) Filter(_ *events.OauthTokenGeneratedEvent) bool { return true }
 
-// transform serializes a PerformanceEvent to JSON for the Kafka message value.
-// ------------------------------------------------------------------------------
-// DEVELOPER NOTE:
-// Customize this method to reshape or enrich events before publishing.
-// You can also change the message key strategy (currently partitioned by user_id).
-// ------------------------------------------------------------------------------
-func (p *PerformancePlugin) transform(e *events.PerformanceEvent) ([]byte, error) {
+func (p *OauthTokenGeneratedPlugin) transform(e *events.OauthTokenGeneratedEvent) ([]byte, error) {
 	data, err := json.Marshal(e.ToDocument())
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal event: %w", err)
@@ -84,7 +75,7 @@ func (p *PerformancePlugin) transform(e *events.PerformanceEvent) ([]byte, error
 	return data, nil
 }
 
-func (p *PerformancePlugin) WriteBatch(ctx context.Context, evts []*events.PerformanceEvent) (int, error) {
+func (p *OauthTokenGeneratedPlugin) WriteBatch(ctx context.Context, evts []*events.OauthTokenGeneratedEvent) (int, error) {
 	if len(evts) == 0 {
 		return 0, nil
 	}
@@ -102,7 +93,7 @@ func (p *PerformancePlugin) WriteBatch(ctx context.Context, evts []*events.Perfo
 			Time:  time.UnixMilli(e.ServerTimestamp),
 			Headers: []kafkago.Header{
 				{Key: "namespace", Value: []byte(e.Namespace)},
-				{Key: "kind", Value: []byte("performance")},
+				{Key: "kind", Value: []byte("oauth_token_generated")},
 			},
 		})
 	}
@@ -119,7 +110,7 @@ func (p *PerformancePlugin) WriteBatch(ctx context.Context, evts []*events.Perfo
 	return len(messages), nil
 }
 
-func (p *PerformancePlugin) Close() error {
+func (p *OauthTokenGeneratedPlugin) Close() error {
 	p.logger.Info("kafka plugin closing", "topic", p.cfg.Topic)
 	if p.writer != nil {
 		return p.writer.Close()
@@ -127,7 +118,7 @@ func (p *PerformancePlugin) Close() error {
 	return nil
 }
 
-func (p *PerformancePlugin) HealthCheck(ctx context.Context) error {
+func (p *OauthTokenGeneratedPlugin) HealthCheck(ctx context.Context) error {
 	if len(p.cfg.Brokers) == 0 {
 		return fmt.Errorf("no kafka brokers configured")
 	}

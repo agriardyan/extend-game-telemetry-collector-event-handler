@@ -20,38 +20,35 @@ import (
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/storage"
 )
 
-// UserBehaviorPluginConfig holds S3 configuration for the user behavior plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// buckets, prefixes, or regions per event category.
-type UserBehaviorPluginConfig struct {
+// StatItemUpdatedPluginConfig holds S3 configuration for the stat_item_updated plugin.
+type StatItemUpdatedPluginConfig struct {
 	Bucket   string // required
 	Prefix   string // default "telemetry"
 	Region   string // default "us-east-1"
 	Endpoint string // optional - for MinIO or custom S3-compatible endpoints
 }
 
-// UserBehaviorPlugin stores user behavior telemetry events as JSON files in Amazon S3.
-// It manages its own AWS client and is fully independent of sibling S3 plugins.
-type UserBehaviorPlugin struct {
-	cfg    UserBehaviorPluginConfig
+// StatItemUpdatedPlugin stores stat item updated events as JSON files in Amazon S3.
+type StatItemUpdatedPlugin struct {
+	cfg    StatItemUpdatedPluginConfig
 	client *awss3.Client
 	logger *slog.Logger
 }
 
-// NewUserBehaviorPlugin creates an S3 plugin for user behavior events.
-func NewUserBehaviorPlugin(cfg UserBehaviorPluginConfig) storage.StoragePlugin[*events.UserBehaviorEvent] {
+// NewStatItemUpdatedPlugin creates an S3 plugin for stat_item_updated events.
+func NewStatItemUpdatedPlugin(cfg StatItemUpdatedPluginConfig) storage.StoragePlugin[*events.StatItemUpdatedEvent] {
 	if cfg.Prefix == "" {
 		cfg.Prefix = "telemetry"
 	}
 	if cfg.Region == "" {
 		cfg.Region = "us-east-1"
 	}
-	return &UserBehaviorPlugin{cfg: cfg}
+	return &StatItemUpdatedPlugin{cfg: cfg}
 }
 
-func (p *UserBehaviorPlugin) Name() string { return "s3:user_behavior" }
+func (p *StatItemUpdatedPlugin) Name() string { return "s3:stat_item_updated" }
 
-func (p *UserBehaviorPlugin) Initialize(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) Initialize(ctx context.Context) error {
 	p.logger = slog.Default().With("plugin", p.Name())
 
 	if p.cfg.Bucket == "" {
@@ -63,11 +60,10 @@ func (p *UserBehaviorPlugin) Initialize(ctx context.Context) error {
 		return fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	// Configure S3 client with custom endpoint for MinIO or S3-compatible services
 	if p.cfg.Endpoint != "" {
 		p.client = awss3.NewFromConfig(awsCfg, func(o *awss3.Options) {
 			o.BaseEndpoint = aws.String(p.cfg.Endpoint)
-			o.UsePathStyle = true // MinIO requires path-style addressing
+			o.UsePathStyle = true
 		})
 		p.logger.Info("s3 plugin initialized with custom endpoint",
 			"bucket", p.cfg.Bucket, "prefix", p.cfg.Prefix, "region", p.cfg.Region, "endpoint", p.cfg.Endpoint)
@@ -83,17 +79,12 @@ func (p *UserBehaviorPlugin) Initialize(ctx context.Context) error {
 // ------------------------------------------------------------------------------
 // DEVELOPER NOTE:
 // Implement custom filtering logic here. Return false to skip an event.
-// For example, filter out events from certain namespaces or users.
 // ------------------------------------------------------------------------------
-func (p *UserBehaviorPlugin) Filter(_ *events.UserBehaviorEvent) bool { return true }
+func (p *StatItemUpdatedPlugin) Filter(_ *events.StatItemUpdatedEvent) bool { return true }
 
 // WriteBatch serializes the batch to JSON and uploads it to S3.
-// ------------------------------------------------------------------------------
-// DEVELOPER NOTE:
-// Customize transform logic here to reshape or enrich events before upload.
-// The S3 key format is: {prefix}/user_behavior/{namespace}/year=YYYY/month=MM/day=DD/{ts}.json
-// ------------------------------------------------------------------------------
-func (p *UserBehaviorPlugin) WriteBatch(ctx context.Context, evts []*events.UserBehaviorEvent) (int, error) {
+// The S3 key format is: {prefix}/stat_item_updated/{namespace}/year=YYYY/month=MM/day=DD/{ts}.json
+func (p *StatItemUpdatedPlugin) WriteBatch(ctx context.Context, evts []*events.StatItemUpdatedEvent) (int, error) {
 	if len(evts) == 0 {
 		return 0, nil
 	}
@@ -109,7 +100,7 @@ func (p *UserBehaviorPlugin) WriteBatch(ctx context.Context, evts []*events.User
 	}
 
 	now := time.Now().UTC()
-	key := fmt.Sprintf("%s/user_behavior/%s/year=%d/month=%02d/day=%02d/%d.json",
+	key := fmt.Sprintf("%s/stat_item_updated/%s/year=%d/month=%02d/day=%02d/%d.json",
 		p.cfg.Prefix, evts[0].Namespace,
 		now.Year(), now.Month(), now.Day(), now.UnixMilli())
 
@@ -132,13 +123,12 @@ func (p *UserBehaviorPlugin) WriteBatch(ctx context.Context, evts []*events.User
 	return len(documents), nil
 }
 
-func (p *UserBehaviorPlugin) Close() error {
-	// The AWS S3 client does not hold persistent connections and requires no cleanup.
+func (p *StatItemUpdatedPlugin) Close() error {
 	p.logger.Info("s3 plugin closed")
 	return nil
 }
 
-func (p *UserBehaviorPlugin) HealthCheck(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) HealthCheck(ctx context.Context) error {
 	_, err := p.client.HeadBucket(ctx, &awss3.HeadBucketInput{
 		Bucket: aws.String(p.cfg.Bucket),
 	})

@@ -19,42 +19,39 @@ import (
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/storage"
 )
 
-// PerformancePluginConfig holds MongoDB configuration for the performance plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// URIs, databases, or collections per event category.
-type PerformancePluginConfig struct {
+// StatItemUpdatedPluginConfig holds MongoDB configuration for the stat_item_updated plugin.
+type StatItemUpdatedPluginConfig struct {
 	URI        string // required, e.g. "mongodb://user:pass@host:27017"
 	Database   string // default "telemetry"
-	Collection string // default "performance_events"
+	Collection string // default "stat_item_updated_events"
 	Workers    int    // connection pool size hint; default 2
 }
 
-// PerformancePlugin stores performance telemetry events in a MongoDB collection.
-// It manages its own mongo.Client and is fully independent of sibling MongoDB plugins.
-type PerformancePlugin struct {
-	cfg        PerformancePluginConfig
+// StatItemUpdatedPlugin stores stat item updated events in a MongoDB collection.
+type StatItemUpdatedPlugin struct {
+	cfg        StatItemUpdatedPluginConfig
 	client     *mongo.Client
 	collection *mongo.Collection
 	logger     *slog.Logger
 }
 
-// NewPerformancePlugin creates a MongoDB plugin for performance events.
-func NewPerformancePlugin(cfg PerformancePluginConfig) storage.StoragePlugin[*events.PerformanceEvent] {
+// NewStatItemUpdatedPlugin creates a MongoDB plugin for stat_item_updated events.
+func NewStatItemUpdatedPlugin(cfg StatItemUpdatedPluginConfig) storage.StoragePlugin[*events.StatItemUpdatedEvent] {
 	if cfg.Database == "" {
 		cfg.Database = "telemetry"
 	}
 	if cfg.Collection == "" {
-		cfg.Collection = "performance_events"
+		cfg.Collection = "stat_item_updated_events"
 	}
 	if cfg.Workers <= 0 {
 		cfg.Workers = 2
 	}
-	return &PerformancePlugin{cfg: cfg}
+	return &StatItemUpdatedPlugin{cfg: cfg}
 }
 
-func (p *PerformancePlugin) Name() string { return "mongodb:performance" }
+func (p *StatItemUpdatedPlugin) Name() string { return "mongodb:stat_item_updated" }
 
-func (p *PerformancePlugin) Initialize(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) Initialize(ctx context.Context) error {
 	p.logger = slog.Default().With("plugin", p.Name())
 
 	if p.cfg.URI == "" {
@@ -94,7 +91,7 @@ func (p *PerformancePlugin) Initialize(ctx context.Context) error {
 	return nil
 }
 
-func (p *PerformancePlugin) createIndexes(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) createIndexes(ctx context.Context) error {
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "namespace", Value: 1}, {Key: "server_timestamp", Value: -1}}},
 		{Keys: bson.D{{Key: "user_id", Value: 1}}},
@@ -109,17 +106,10 @@ func (p *PerformancePlugin) createIndexes(ctx context.Context) error {
 // ------------------------------------------------------------------------------
 // DEVELOPER NOTE:
 // Implement custom filtering logic here. Return false to skip an event.
-// For example, filter out events from certain namespaces or users.
 // ------------------------------------------------------------------------------
-func (p *PerformancePlugin) Filter(_ *events.PerformanceEvent) bool { return true }
+func (p *StatItemUpdatedPlugin) Filter(_ *events.StatItemUpdatedEvent) bool { return true }
 
-// transform converts a PerformanceEvent into a format suitable for MongoDB insertion.
-// ------------------------------------------------------------------------------
-// DEVELOPER NOTE:
-// Customize this method to reshape or enrich events before storage.
-// For example, flatten nested properties, convert timestamps, or mask fields.
-// ------------------------------------------------------------------------------
-func (p *PerformancePlugin) transform(e *events.PerformanceEvent) (any, error) {
+func (p *StatItemUpdatedPlugin) transform(e *events.StatItemUpdatedEvent) (any, error) {
 	flat := e.ToDocument()
 	if payload, ok := flat["payload"]; ok {
 		payloadBytes, err := json.Marshal(payload)
@@ -139,7 +129,7 @@ func (p *PerformancePlugin) transform(e *events.PerformanceEvent) (any, error) {
 	return doc, nil
 }
 
-func (p *PerformancePlugin) WriteBatch(ctx context.Context, evts []*events.PerformanceEvent) (int, error) {
+func (p *StatItemUpdatedPlugin) WriteBatch(ctx context.Context, evts []*events.StatItemUpdatedEvent) (int, error) {
 	if len(evts) == 0 {
 		return 0, nil
 	}
@@ -170,7 +160,7 @@ func (p *PerformancePlugin) WriteBatch(ctx context.Context, evts []*events.Perfo
 	return len(result.InsertedIDs), nil
 }
 
-func (p *PerformancePlugin) Close() error {
+func (p *StatItemUpdatedPlugin) Close() error {
 	p.logger.Info("mongodb plugin closing", "collection", p.cfg.Collection)
 	if p.client != nil {
 		return p.client.Disconnect(context.Background())
@@ -178,6 +168,6 @@ func (p *PerformancePlugin) Close() error {
 	return nil
 }
 
-func (p *PerformancePlugin) HealthCheck(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) HealthCheck(ctx context.Context) error {
 	return p.client.Ping(ctx, nil)
 }

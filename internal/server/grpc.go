@@ -10,9 +10,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/AccelByte/accelbyte-go-sdk/services-api/pkg/repository"
 	"github.com/AccelByte/accelbyte-go-sdk/services-api/pkg/service/iam"
@@ -62,25 +59,6 @@ func NewGRPCServer(ctx context.Context, cfg GRPCServerConfig) (*grpc.Server, err
 	streamServerInterceptors := []grpc.StreamServerInterceptor{
 		prometheusGrpc.StreamServerInterceptor,
 		logging.StreamServerInterceptor(common.InterceptorLogger(cfg.Logger), loggingOptions...),
-	}
-
-	// Check if auth is enabled
-	if strings.ToLower(os.Getenv("PLUGIN_GRPC_SERVER_AUTH_ENABLED")) != "false" {
-		refreshInterval := 600
-		if val := os.Getenv("REFRESH_INTERVAL"); val != "" {
-			if parsed, err := strconv.Atoi(val); err == nil {
-				refreshInterval = parsed
-			}
-		}
-		common.Validator = common.NewTokenValidator(*cfg.OAuthService, time.Duration(refreshInterval)*time.Second, true)
-		err := common.Validator.Initialize(ctx)
-		if err != nil {
-			cfg.Logger.Info(err.Error())
-		}
-
-		unaryServerInterceptors = append(unaryServerInterceptors, common.NewUnaryAuthServerIntercept())
-		streamServerInterceptors = append(streamServerInterceptors, common.NewStreamAuthServerIntercept())
-		cfg.Logger.Info("added auth interceptors")
 	}
 
 	// Create gRPC Server

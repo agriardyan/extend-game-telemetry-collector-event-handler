@@ -21,58 +21,44 @@ import (
 
 // StoragePlugins holds all initialized storage plugins for each event type
 type StoragePlugins struct {
-	UserBehavior []storage.StoragePlugin[*events.UserBehaviorEvent]
-	Gameplay     []storage.StoragePlugin[*events.GameplayEvent]
-	Performance  []storage.StoragePlugin[*events.PerformanceEvent]
+	StatItemUpdated    []storage.StoragePlugin[*events.StatItemUpdatedEvent]
+	OauthTokenGenerated []storage.StoragePlugin[*events.OauthTokenGeneratedEvent]
 }
 
 // InitializeStoragePlugins creates and initializes storage plugins based on configuration
 func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger *slog.Logger) (*StoragePlugins, error) {
 	plugins := &StoragePlugins{
-		UserBehavior: []storage.StoragePlugin[*events.UserBehaviorEvent]{},
-		Gameplay:     []storage.StoragePlugin[*events.GameplayEvent]{},
-		Performance:  []storage.StoragePlugin[*events.PerformanceEvent]{},
+		StatItemUpdated:    []storage.StoragePlugin[*events.StatItemUpdatedEvent]{},
+		OauthTokenGenerated: []storage.StoragePlugin[*events.OauthTokenGeneratedEvent]{},
 	}
 
 	for _, pluginName := range appCfg.GetEnabledPlugins() {
 		var (
-			ubPlugin   storage.StoragePlugin[*events.UserBehaviorEvent]
-			gpPlugin   storage.StoragePlugin[*events.GameplayEvent]
-			perfPlugin storage.StoragePlugin[*events.PerformanceEvent]
+			siuPlugin storage.StoragePlugin[*events.StatItemUpdatedEvent]
+			otgPlugin storage.StoragePlugin[*events.OauthTokenGeneratedEvent]
 		)
 
 		switch pluginName {
 		case "postgres":
-			ubPlugin = postgres.NewUserBehaviorPlugin(postgres.UserBehaviorPluginConfig{
+			siuPlugin = postgres.NewStatItemUpdatedPlugin(postgres.StatItemUpdatedPluginConfig{
 				DSN:     appCfg.Storage.Postgres.PostgresDSN,
-				Table:   "user_behavior_events",
+				Table:   "stat_item_updated_events",
 				Workers: appCfg.Storage.Postgres.Workers,
 			})
-			gpPlugin = postgres.NewGameplayPlugin(postgres.GameplayPluginConfig{
+			otgPlugin = postgres.NewOauthTokenGeneratedPlugin(postgres.OauthTokenGeneratedPluginConfig{
 				DSN:     appCfg.Storage.Postgres.PostgresDSN,
-				Table:   "gameplay_events",
-				Workers: appCfg.Storage.Postgres.Workers,
-			})
-			perfPlugin = postgres.NewPerformancePlugin(postgres.PerformancePluginConfig{
-				DSN:     appCfg.Storage.Postgres.PostgresDSN,
-				Table:   "performance_events",
+				Table:   "oauth_token_generated_events",
 				Workers: appCfg.Storage.Postgres.Workers,
 			})
 
 		case "s3":
-			ubPlugin = s3.NewUserBehaviorPlugin(s3.UserBehaviorPluginConfig{
+			siuPlugin = s3.NewStatItemUpdatedPlugin(s3.StatItemUpdatedPluginConfig{
 				Bucket:   appCfg.Storage.S3.S3Bucket,
 				Prefix:   appCfg.Storage.S3.S3Prefix,
 				Region:   appCfg.Storage.S3.S3Region,
 				Endpoint: appCfg.Storage.S3.S3Endpoint,
 			})
-			gpPlugin = s3.NewGameplayPlugin(s3.GameplayPluginConfig{
-				Bucket:   appCfg.Storage.S3.S3Bucket,
-				Prefix:   appCfg.Storage.S3.S3Prefix,
-				Region:   appCfg.Storage.S3.S3Region,
-				Endpoint: appCfg.Storage.S3.S3Endpoint,
-			})
-			perfPlugin = s3.NewPerformancePlugin(s3.PerformancePluginConfig{
+			otgPlugin = s3.NewOauthTokenGeneratedPlugin(s3.OauthTokenGeneratedPluginConfig{
 				Bucket:   appCfg.Storage.S3.S3Bucket,
 				Prefix:   appCfg.Storage.S3.S3Prefix,
 				Region:   appCfg.Storage.S3.S3Region,
@@ -85,52 +71,38 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 				brokers[i] = strings.TrimSpace(b)
 			}
 			baseTopic := appCfg.Storage.Kafka.KafkaTopic
-			ubPlugin = kafka.NewUserBehaviorPlugin(kafka.UserBehaviorPluginConfig{
+			siuPlugin = kafka.NewStatItemUpdatedPlugin(kafka.StatItemUpdatedPluginConfig{
 				Brokers:       brokers,
-				Topic:         baseTopic + ".user_behavior",
+				Topic:         baseTopic + ".stat_item_updated",
 				Compression:   appCfg.Storage.Kafka.KafkaCompression,
 				BatchSize:     appCfg.Storage.Kafka.BatchSize,
 				FlushInterval: appCfg.Storage.Kafka.FlushInterval,
 			})
-			gpPlugin = kafka.NewGameplayPlugin(kafka.GameplayPluginConfig{
+			otgPlugin = kafka.NewOauthTokenGeneratedPlugin(kafka.OauthTokenGeneratedPluginConfig{
 				Brokers:       brokers,
-				Topic:         baseTopic + ".gameplay",
-				Compression:   appCfg.Storage.Kafka.KafkaCompression,
-				BatchSize:     appCfg.Storage.Kafka.BatchSize,
-				FlushInterval: appCfg.Storage.Kafka.FlushInterval,
-			})
-			perfPlugin = kafka.NewPerformancePlugin(kafka.PerformancePluginConfig{
-				Brokers:       brokers,
-				Topic:         baseTopic + ".performance",
+				Topic:         baseTopic + ".oauth_token_generated",
 				Compression:   appCfg.Storage.Kafka.KafkaCompression,
 				BatchSize:     appCfg.Storage.Kafka.BatchSize,
 				FlushInterval: appCfg.Storage.Kafka.FlushInterval,
 			})
 
 		case "mongodb":
-			ubPlugin = mongodb.NewUserBehaviorPlugin(mongodb.UserBehaviorPluginConfig{
+			siuPlugin = mongodb.NewStatItemUpdatedPlugin(mongodb.StatItemUpdatedPluginConfig{
 				URI:        appCfg.Storage.MongoDB.MongoURI,
 				Database:   appCfg.Storage.MongoDB.MongoDatabase,
-				Collection: "user_behavior_events",
+				Collection: "stat_item_updated_events",
 				Workers:    appCfg.Storage.MongoDB.Workers,
 			})
-			gpPlugin = mongodb.NewGameplayPlugin(mongodb.GameplayPluginConfig{
+			otgPlugin = mongodb.NewOauthTokenGeneratedPlugin(mongodb.OauthTokenGeneratedPluginConfig{
 				URI:        appCfg.Storage.MongoDB.MongoURI,
 				Database:   appCfg.Storage.MongoDB.MongoDatabase,
-				Collection: "gameplay_events",
-				Workers:    appCfg.Storage.MongoDB.Workers,
-			})
-			perfPlugin = mongodb.NewPerformancePlugin(mongodb.PerformancePluginConfig{
-				URI:        appCfg.Storage.MongoDB.MongoURI,
-				Database:   appCfg.Storage.MongoDB.MongoDatabase,
-				Collection: "performance_events",
+				Collection: "oauth_token_generated_events",
 				Workers:    appCfg.Storage.MongoDB.Workers,
 			})
 
 		case "noop":
-			ubPlugin = noop.NewNoopPlugin[*events.UserBehaviorEvent]()
-			gpPlugin = noop.NewNoopPlugin[*events.GameplayEvent]()
-			perfPlugin = noop.NewNoopPlugin[*events.PerformanceEvent]()
+			siuPlugin = noop.NewNoopPlugin[*events.StatItemUpdatedEvent]()
+			otgPlugin = noop.NewNoopPlugin[*events.OauthTokenGeneratedEvent]()
 
 		default:
 			logger.Error("unknown plugin", "plugin", pluginName)
@@ -138,62 +110,49 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 		}
 
 		// Initialize all plugins
-		if err := ubPlugin.Initialize(ctx); err != nil {
+
+		if err := siuPlugin.Initialize(ctx); err != nil {
 			return nil, err
 		}
-		logger.Info("plugin initialized", "plugin", ubPlugin.Name())
+		logger.Info("plugin initialized", "plugin", siuPlugin.Name())
+		plugins.StatItemUpdated = append(plugins.StatItemUpdated, siuPlugin)
 
-		if err := gpPlugin.Initialize(ctx); err != nil {
+		if err := otgPlugin.Initialize(ctx); err != nil {
 			return nil, err
 		}
-		logger.Info("plugin initialized", "plugin", gpPlugin.Name())
-
-		if err := perfPlugin.Initialize(ctx); err != nil {
-			return nil, err
-		}
-		logger.Info("plugin initialized", "plugin", perfPlugin.Name())
-
-		plugins.UserBehavior = append(plugins.UserBehavior, ubPlugin)
-		plugins.Gameplay = append(plugins.Gameplay, gpPlugin)
-		plugins.Performance = append(plugins.Performance, perfPlugin)
+		logger.Info("plugin initialized", "plugin", otgPlugin.Name())
+		plugins.OauthTokenGenerated = append(plugins.OauthTokenGenerated, otgPlugin)
 	}
 
-	if len(plugins.UserBehavior) == 0 {
+	if len(plugins.StatItemUpdated) == 0 {
 		logger.Warn("no storage plugins enabled, using noop")
-		noopUB := noop.NewNoopPlugin[*events.UserBehaviorEvent]()
-		noopUB.Initialize(ctx)
-		plugins.UserBehavior = append(plugins.UserBehavior, noopUB)
 
-		noopGP := noop.NewNoopPlugin[*events.GameplayEvent]()
-		noopGP.Initialize(ctx)
-		plugins.Gameplay = append(plugins.Gameplay, noopGP)
+		noopSIU := noop.NewNoopPlugin[*events.StatItemUpdatedEvent]()
+		noopSIU.Initialize(ctx)
+		plugins.StatItemUpdated = append(plugins.StatItemUpdated, noopSIU)
+	}
 
-		noopPerf := noop.NewNoopPlugin[*events.PerformanceEvent]()
-		noopPerf.Initialize(ctx)
-		plugins.Performance = append(plugins.Performance, noopPerf)
+	if len(plugins.OauthTokenGenerated) == 0 {
+		noopOTG := noop.NewNoopPlugin[*events.OauthTokenGeneratedEvent]()
+		noopOTG.Initialize(ctx)
+		plugins.OauthTokenGenerated = append(plugins.OauthTokenGenerated, noopOTG)
 	}
 
 	logger.Info("storage plugins ready",
-		"user_behavior", len(plugins.UserBehavior),
-		"gameplay", len(plugins.Gameplay),
-		"performance", len(plugins.Performance))
+		"stat_item_updated", len(plugins.StatItemUpdated),
+		"oauth_token_generated", len(plugins.OauthTokenGenerated))
 
 	return plugins, nil
 }
 
 // CloseStoragePlugins closes all storage plugins gracefully
 func CloseStoragePlugins(plugins *StoragePlugins, logger *slog.Logger) {
-	for _, p := range plugins.UserBehavior {
+	for _, p := range plugins.StatItemUpdated {
 		if err := p.Close(); err != nil {
 			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
 		}
 	}
-	for _, p := range plugins.Gameplay {
-		if err := p.Close(); err != nil {
-			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
-		}
-	}
-	for _, p := range plugins.Performance {
+	for _, p := range plugins.OauthTokenGenerated {
 		if err := p.Close(); err != nil {
 			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
 		}

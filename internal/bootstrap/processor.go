@@ -15,9 +15,8 @@ import (
 
 // Processors holds processors for each event type
 type Processors struct {
-	UserBehavior *processor.Processor[*events.UserBehaviorEvent]
-	Gameplay     *processor.Processor[*events.GameplayEvent]
-	Performance  *processor.Processor[*events.PerformanceEvent]
+	StatItemUpdated    *processor.Processor[*events.StatItemUpdatedEvent]
+	OauthTokenGenerated *processor.Processor[*events.OauthTokenGeneratedEvent]
 }
 
 // InitializeProcessors creates and starts processors for each event type
@@ -35,14 +34,12 @@ func InitializeProcessors(
 	}
 
 	procs := &Processors{
-		UserBehavior: processor.NewProcessor(processorCfg, plugins.UserBehavior, dedups.UserBehavior, logger),
-		Gameplay:     processor.NewProcessor(processorCfg, plugins.Gameplay, dedups.Gameplay, logger),
-		Performance:  processor.NewProcessor(processorCfg, plugins.Performance, dedups.Performance, logger),
+		StatItemUpdated:    processor.NewProcessor(processorCfg, plugins.StatItemUpdated, dedups.StatItemUpdated, logger),
+		OauthTokenGenerated: processor.NewProcessor(processorCfg, plugins.OauthTokenGenerated, dedups.OauthTokenGenerated, logger),
 	}
 
-	procs.UserBehavior.Start()
-	procs.Gameplay.Start()
-	procs.Performance.Start()
+	procs.StatItemUpdated.Start()
+	procs.OauthTokenGenerated.Start()
 
 	logger.Info("async processors started",
 		"workers", processorCfg.Workers,
@@ -55,13 +52,10 @@ func InitializeProcessors(
 
 // ShutdownProcessors gracefully shuts down all processors
 func ShutdownProcessors(procs *Processors, timeout time.Duration, logger *slog.Logger) {
-	if err := procs.UserBehavior.Shutdown(timeout); err != nil {
-		logger.Error("user_behavior processor shutdown error", "error", err)
+	if err := procs.StatItemUpdated.Shutdown(timeout); err != nil {
+		logger.Error("stat_item_updated processor shutdown error", "error", err)
 	}
-	if err := procs.Gameplay.Shutdown(timeout); err != nil {
-		logger.Error("gameplay processor shutdown error", "error", err)
-	}
-	if err := procs.Performance.Shutdown(timeout); err != nil {
-		logger.Error("performance processor shutdown error", "error", err)
+	if err := procs.OauthTokenGenerated.Shutdown(timeout); err != nil {
+		logger.Error("oauth_token_generated processor shutdown error", "error", err)
 	}
 }

@@ -19,42 +19,39 @@ import (
 	"github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/storage"
 )
 
-// UserBehaviorPluginConfig holds MongoDB configuration for the user behavior plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// URIs, databases, or collections per event category.
-type UserBehaviorPluginConfig struct {
-	URI        string // required, e.g. "mongodb://user:pass@host:27017"
+// OauthTokenGeneratedPluginConfig holds MongoDB configuration for the oauth_token_generated plugin.
+type OauthTokenGeneratedPluginConfig struct {
+	URI        string // required
 	Database   string // default "telemetry"
-	Collection string // default "user_behavior_events"
+	Collection string // default "oauth_token_generated_events"
 	Workers    int    // connection pool size hint; default 2
 }
 
-// UserBehaviorPlugin stores user behavior telemetry events in a MongoDB collection.
-// It manages its own mongo.Client and is fully independent of sibling MongoDB plugins.
-type UserBehaviorPlugin struct {
-	cfg        UserBehaviorPluginConfig
+// OauthTokenGeneratedPlugin stores oauth token generated events in a MongoDB collection.
+type OauthTokenGeneratedPlugin struct {
+	cfg        OauthTokenGeneratedPluginConfig
 	client     *mongo.Client
 	collection *mongo.Collection
 	logger     *slog.Logger
 }
 
-// NewUserBehaviorPlugin creates a MongoDB plugin for user behavior events.
-func NewUserBehaviorPlugin(cfg UserBehaviorPluginConfig) storage.StoragePlugin[*events.UserBehaviorEvent] {
+// NewOauthTokenGeneratedPlugin creates a MongoDB plugin for oauth_token_generated events.
+func NewOauthTokenGeneratedPlugin(cfg OauthTokenGeneratedPluginConfig) storage.StoragePlugin[*events.OauthTokenGeneratedEvent] {
 	if cfg.Database == "" {
 		cfg.Database = "telemetry"
 	}
 	if cfg.Collection == "" {
-		cfg.Collection = "user_behavior_events"
+		cfg.Collection = "oauth_token_generated_events"
 	}
 	if cfg.Workers <= 0 {
 		cfg.Workers = 2
 	}
-	return &UserBehaviorPlugin{cfg: cfg}
+	return &OauthTokenGeneratedPlugin{cfg: cfg}
 }
 
-func (p *UserBehaviorPlugin) Name() string { return "mongodb:user_behavior" }
+func (p *OauthTokenGeneratedPlugin) Name() string { return "mongodb:oauth_token_generated" }
 
-func (p *UserBehaviorPlugin) Initialize(ctx context.Context) error {
+func (p *OauthTokenGeneratedPlugin) Initialize(ctx context.Context) error {
 	p.logger = slog.Default().With("plugin", p.Name())
 
 	if p.cfg.URI == "" {
@@ -94,7 +91,7 @@ func (p *UserBehaviorPlugin) Initialize(ctx context.Context) error {
 	return nil
 }
 
-func (p *UserBehaviorPlugin) createIndexes(ctx context.Context) error {
+func (p *OauthTokenGeneratedPlugin) createIndexes(ctx context.Context) error {
 	indexes := []mongo.IndexModel{
 		{Keys: bson.D{{Key: "namespace", Value: 1}, {Key: "server_timestamp", Value: -1}}},
 		{Keys: bson.D{{Key: "user_id", Value: 1}}},
@@ -111,15 +108,15 @@ func (p *UserBehaviorPlugin) createIndexes(ctx context.Context) error {
 // Implement custom filtering logic here. Return false to skip an event.
 // For example, filter out events from certain namespaces or users.
 // ------------------------------------------------------------------------------
-func (p *UserBehaviorPlugin) Filter(_ *events.UserBehaviorEvent) bool { return true }
+func (p *OauthTokenGeneratedPlugin) Filter(_ *events.OauthTokenGeneratedEvent) bool { return true }
 
-// transform converts a UserBehaviorEvent into a format suitable for MongoDB insertion.
+// transform converts an OauthTokenGeneratedEvent into a format suitable for MongoDB insertion.
 // ------------------------------------------------------------------------------
 // DEVELOPER NOTE:
 // Customize this method to reshape or enrich events before storage.
 // For example, flatten nested properties, convert timestamps, or mask fields.
 // ------------------------------------------------------------------------------
-func (p *UserBehaviorPlugin) transform(e *events.UserBehaviorEvent) (any, error) {
+func (p *OauthTokenGeneratedPlugin) transform(e *events.OauthTokenGeneratedEvent) (any, error) {
 	flat := e.ToDocument()
 	if payload, ok := flat["payload"]; ok {
 		payloadBytes, err := json.Marshal(payload)
@@ -139,7 +136,7 @@ func (p *UserBehaviorPlugin) transform(e *events.UserBehaviorEvent) (any, error)
 	return doc, nil
 }
 
-func (p *UserBehaviorPlugin) WriteBatch(ctx context.Context, evts []*events.UserBehaviorEvent) (int, error) {
+func (p *OauthTokenGeneratedPlugin) WriteBatch(ctx context.Context, evts []*events.OauthTokenGeneratedEvent) (int, error) {
 	if len(evts) == 0 {
 		return 0, nil
 	}
@@ -170,7 +167,7 @@ func (p *UserBehaviorPlugin) WriteBatch(ctx context.Context, evts []*events.User
 	return len(result.InsertedIDs), nil
 }
 
-func (p *UserBehaviorPlugin) Close() error {
+func (p *OauthTokenGeneratedPlugin) Close() error {
 	p.logger.Info("mongodb plugin closing", "collection", p.cfg.Collection)
 	if p.client != nil {
 		return p.client.Disconnect(context.Background())
@@ -178,6 +175,6 @@ func (p *UserBehaviorPlugin) Close() error {
 	return nil
 }
 
-func (p *UserBehaviorPlugin) HealthCheck(ctx context.Context) error {
+func (p *OauthTokenGeneratedPlugin) HealthCheck(ctx context.Context) error {
 	return p.client.Ping(ctx, nil)
 }
