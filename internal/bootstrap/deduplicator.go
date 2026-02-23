@@ -15,13 +15,15 @@ import (
 
 // Deduplicators holds deduplicators for each event type
 type Deduplicators struct {
-	StatItemUpdated dedup.Deduplicator[*events.StatItemUpdatedEvent]
+	StatItemUpdated    dedup.Deduplicator[*events.StatItemUpdatedEvent]
+	OauthTokenGenerated dedup.Deduplicator[*events.OauthTokenGeneratedEvent]
 }
 
 // InitializeDeduplicators creates deduplicators based on configuration
 func InitializeDeduplicators(appCfg *config.Config, logger *slog.Logger) *Deduplicators {
 	return &Deduplicators{
-		StatItemUpdated: buildDeduplicator[*events.StatItemUpdatedEvent](appCfg, logger),
+		StatItemUpdated:    buildDeduplicator[*events.StatItemUpdatedEvent](appCfg, logger),
+		OauthTokenGenerated: buildDeduplicator[*events.OauthTokenGeneratedEvent](appCfg, logger),
 	}
 }
 
@@ -53,5 +55,8 @@ func buildDeduplicator[T storage.Deduplicatable](appCfg *config.Config, logger *
 func CloseDeduplicators(dedups *Deduplicators, logger *slog.Logger) {
 	if err := dedups.StatItemUpdated.Close(); err != nil {
 		logger.Error("stat_item_updated deduplicator close error", "error", err)
+	}
+	if err := dedups.OauthTokenGenerated.Close(); err != nil {
+		logger.Error("oauth_token_generated deduplicator close error", "error", err)
 	}
 }

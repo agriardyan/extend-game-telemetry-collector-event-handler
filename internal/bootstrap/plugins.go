@@ -21,18 +21,21 @@ import (
 
 // StoragePlugins holds all initialized storage plugins for each event type
 type StoragePlugins struct {
-	StatItemUpdated []storage.StoragePlugin[*events.StatItemUpdatedEvent]
+	StatItemUpdated    []storage.StoragePlugin[*events.StatItemUpdatedEvent]
+	OauthTokenGenerated []storage.StoragePlugin[*events.OauthTokenGeneratedEvent]
 }
 
 // InitializeStoragePlugins creates and initializes storage plugins based on configuration
 func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger *slog.Logger) (*StoragePlugins, error) {
 	plugins := &StoragePlugins{
-		StatItemUpdated: []storage.StoragePlugin[*events.StatItemUpdatedEvent]{},
+		StatItemUpdated:    []storage.StoragePlugin[*events.StatItemUpdatedEvent]{},
+		OauthTokenGenerated: []storage.StoragePlugin[*events.OauthTokenGeneratedEvent]{},
 	}
 
 	for _, pluginName := range appCfg.GetEnabledPlugins() {
 		var (
 			siuPlugin storage.StoragePlugin[*events.StatItemUpdatedEvent]
+			otgPlugin storage.StoragePlugin[*events.OauthTokenGeneratedEvent]
 		)
 
 		switch pluginName {
@@ -42,9 +45,20 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 				Table:   "stat_item_updated_events",
 				Workers: appCfg.Storage.Postgres.Workers,
 			})
+			otgPlugin = postgres.NewOauthTokenGeneratedPlugin(postgres.OauthTokenGeneratedPluginConfig{
+				DSN:     appCfg.Storage.Postgres.PostgresDSN,
+				Table:   "oauth_token_generated_events",
+				Workers: appCfg.Storage.Postgres.Workers,
+			})
 
 		case "s3":
 			siuPlugin = s3.NewStatItemUpdatedPlugin(s3.StatItemUpdatedPluginConfig{
+				Bucket:   appCfg.Storage.S3.S3Bucket,
+				Prefix:   appCfg.Storage.S3.S3Prefix,
+				Region:   appCfg.Storage.S3.S3Region,
+				Endpoint: appCfg.Storage.S3.S3Endpoint,
+			})
+			otgPlugin = s3.NewOauthTokenGeneratedPlugin(s3.OauthTokenGeneratedPluginConfig{
 				Bucket:   appCfg.Storage.S3.S3Bucket,
 				Prefix:   appCfg.Storage.S3.S3Prefix,
 				Region:   appCfg.Storage.S3.S3Region,
@@ -64,6 +78,13 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 				BatchSize:     appCfg.Storage.Kafka.BatchSize,
 				FlushInterval: appCfg.Storage.Kafka.FlushInterval,
 			})
+			otgPlugin = kafka.NewOauthTokenGeneratedPlugin(kafka.OauthTokenGeneratedPluginConfig{
+				Brokers:       brokers,
+				Topic:         baseTopic + ".oauth_token_generated",
+				Compression:   appCfg.Storage.Kafka.KafkaCompression,
+				BatchSize:     appCfg.Storage.Kafka.BatchSize,
+				FlushInterval: appCfg.Storage.Kafka.FlushInterval,
+			})
 
 		case "mongodb":
 			siuPlugin = mongodb.NewStatItemUpdatedPlugin(mongodb.StatItemUpdatedPluginConfig{
@@ -72,9 +93,16 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 				Collection: "stat_item_updated_events",
 				Workers:    appCfg.Storage.MongoDB.Workers,
 			})
+			otgPlugin = mongodb.NewOauthTokenGeneratedPlugin(mongodb.OauthTokenGeneratedPluginConfig{
+				URI:        appCfg.Storage.MongoDB.MongoURI,
+				Database:   appCfg.Storage.MongoDB.MongoDatabase,
+				Collection: "oauth_token_generated_events",
+				Workers:    appCfg.Storage.MongoDB.Workers,
+			})
 
 		case "noop":
 			siuPlugin = noop.NewNoopPlugin[*events.StatItemUpdatedEvent]()
+			otgPlugin = noop.NewNoopPlugin[*events.OauthTokenGeneratedEvent]()
 
 		default:
 			logger.Error("unknown plugin", "plugin", pluginName)
@@ -87,8 +115,13 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 			return nil, err
 		}
 		logger.Info("plugin initialized", "plugin", siuPlugin.Name())
-
 		plugins.StatItemUpdated = append(plugins.StatItemUpdated, siuPlugin)
+
+		if err := otgPlugin.Initialize(ctx); err != nil {
+			return nil, err
+		}
+		logger.Info("plugin initialized", "plugin", otgPlugin.Name())
+		plugins.OauthTokenGenerated = append(plugins.OauthTokenGenerated, otgPlugin)
 	}
 
 	if len(plugins.StatItemUpdated) == 0 {
@@ -99,8 +132,15 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 		plugins.StatItemUpdated = append(plugins.StatItemUpdated, noopSIU)
 	}
 
+	if len(plugins.OauthTokenGenerated) == 0 {
+		noopOTG := noop.NewNoopPlugin[*events.OauthTokenGeneratedEvent]()
+		noopOTG.Initialize(ctx)
+		plugins.OauthTokenGenerated = append(plugins.OauthTokenGenerated, noopOTG)
+	}
+
 	logger.Info("storage plugins ready",
-		"stat_item_updated", len(plugins.StatItemUpdated))
+		"stat_item_updated", len(plugins.StatItemUpdated),
+		"oauth_token_generated", len(plugins.OauthTokenGenerated))
 
 	return plugins, nil
 }
@@ -108,6 +148,11 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 // CloseStoragePlugins closes all storage plugins gracefully
 func CloseStoragePlugins(plugins *StoragePlugins, logger *slog.Logger) {
 	for _, p := range plugins.StatItemUpdated {
+		if err := p.Close(); err != nil {
+			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
+		}
+	}
+	for _, p := range plugins.OauthTokenGenerated {
 		if err := p.Close(); err != nil {
 			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
 		}

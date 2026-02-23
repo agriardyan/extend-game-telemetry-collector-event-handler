@@ -2,16 +2,13 @@
 
 This guide helps developers extend the telemetry collector with new storage plugins. There are two common extension scenarios:
 
-1. **[Adding a new telemetry type](#adding-a-new-telemetry-type)** — you have a new event
-   category (e.g., economy, combat, social) and want to add plugin support for it across the
-   existing storage backends.
+1. **[Handling a new AGS event type](#handling-a-new-ags-event-type)** — AGS published a new event you want to capture (e.g., achievement unlocked, matchmaking completed) and you want to add storage plugin support for it across existing backends.
 
-2. **[Adding a new storage backend](#adding-a-new-storage-backend)** — you want to route
-   events to a new destination (e.g., BigQuery, Elasticsearch, ClickHouse) and need to
-   implement plugins for it.
+2. **[Adding a new storage backend](#adding-a-new-storage-backend)** — you want to route events to a new destination (e.g., BigQuery, Elasticsearch, ClickHouse) and need to implement plugins for it.
 
-Both scenarios share the same core interface and conventions. Read the
-[Plugin Contract](#plugin-contract) section first.
+Both scenarios share the same core interface and conventions. Read the [Plugin Contract](#plugin-contract) section first.
+
+> **Important:** This is an Extend Event Handler app. Event schemas are defined by AccelByte Gaming Services — you cannot define your own proto messages. All proto files must come from the [AGS event catalogue](https://docs.accelbyte.io/gaming-services/knowledge-base/api-events/) (source: [accelbyte-api-proto on GitHub](https://github.com/AccelByte/accelbyte-api-proto/tree/main/asyncapi)).
 
 ---
 
@@ -31,14 +28,13 @@ type StoragePlugin[T any] interface {
 }
 ```
 
-`T` is the typed event that this plugin handles — one of `*events.UserBehaviorEvent`,
-`*events.GameplayEvent`, `*events.PerformanceEvent`, or a new type you define.
+`T` is the typed event that this plugin handles — for example `*events.StatItemUpdatedEvent`, or a new type you define for another AGS event.
 
 ### Method responsibilities
 
 | Method | Called by | Responsibility |
 |--------|-----------|----------------|
-| `Name()` | Logging, diagnostics | Return a unique identifier in the form `"backend:type"` (e.g., `"postgres:gameplay"`) |
+| `Name()` | Logging, diagnostics | Return a unique identifier in the form `"backend:type"` (e.g., `"postgres:stat_item_updated"`) |
 | `Initialize(ctx)` | Bootstrap layer, once per plugin | Open connections, validate config, create schemas/tables/indexes. Return error if setup fails. |
 | `Filter(event)` | Processor, per event | Return `false` to drop an event before batching; `true` to accept it |
 | `WriteBatch(ctx, events)` | Processor, per batch | Transform and write the batch; return the count written and any error |
@@ -63,9 +59,8 @@ for _, e := range evts {
 ```
 pkg/storage/plugins/
 └── <backend>/
-    ├── user_behavior.go   // StoragePlugin[*events.UserBehaviorEvent]
-    ├── gameplay.go        // StoragePlugin[*events.GameplayEvent]
-    └── performance.go     // StoragePlugin[*events.PerformanceEvent]
+    └── stat_item_updated.go   // StoragePlugin[*events.StatItemUpdatedEvent]
+    // one file per AGS event type you handle
 ```
 
 Each file is self-contained: its own config struct, its own connection, its own constructor.
@@ -73,89 +68,184 @@ No shared state is expected between plugin files in the same package.
 
 ---
 
-## Adding a New Telemetry Type
+## Handling a New AGS Event Type
 
-This section covers the process of adding a new telemetry type. As an example, we'll add an **Economy** telemetry type for tracking in-game purchases and currency transactions.
+This section covers the full process of handling a new AGS event. As an example, we'll add handling for the **`StatItemDeleted`** event from the Statistic service.
 
 ### Overview of Required Changes
 
-When adding a new telemetry type, you need to modify:
-1. **`pkg/events/`** — Create the typed event wrapper
-2. **`pkg/storage/plugins/<backend>/`** — Add plugin files for each storage backend
-3. **`internal/bootstrap/plugins.go`** — Wire plugins into the application
-4. **`pkg/proto/`** — Define protobuf schema (covered in architecture docs)
-5. **`pkg/service/`** — Add gRPC service handler (covered in architecture docs)
+1. **`pkg/proto/accelbyte-asyncapi/`** — Copy the AGS proto file and generate Go code
+2. **`pkg/events/`** — Create the typed event wrapper
+3. **`pkg/service/`** — Add the gRPC service handler
+4. **`pkg/storage/plugins/<backend>/`** — Add plugin files for each storage backend
+5. **`internal/bootstrap/plugins.go`** — Add to `StoragePlugins` struct and initialization
+6. **`internal/bootstrap/processor.go`** — Add processor for the new type
+7. **`internal/bootstrap/deduplicator.go`** — Add deduplicator for the new type
+8. **`internal/app/app.go`** — Register the new gRPC service
 
-This guide focuses on items 1-3 which are the plugin layer concerns.
+### Step 1 — Get the proto definition
 
-### Step 1 — Create the event wrapper
+All AGS event proto files are published at:
+**https://github.com/AccelByte/accelbyte-api-proto/tree/main/asyncapi**
 
-Create `pkg/events/economy.go`. The wrapper carries server-enriched metadata alongside
-the protobuf payload and provides two methods used by the generic infrastructure:
+Find the service that owns the event you want to handle. For the Statistic service, the proto is already present at:
+
+```
+pkg/proto/accelbyte-asyncapi/social/statistic/v1/statistic.proto
+```
+
+If you need a proto from a different AGS service, copy it from the repository into the matching path under `pkg/proto/accelbyte-asyncapi/`, then generate Go code:
+
+```bash
+# From the repository root
+./proto.sh
+```
+
+This regenerates all `*.pb.go` and `*_grpc.pb.go` files under `pkg/pb/accelbyte-asyncapi/`.
+
+### Step 2 — Create the event wrapper
+
+Create `pkg/events/stat_item_deleted.go`. The wrapper carries server-enriched metadata alongside the decoded event fields and provides two methods used by the generic infrastructure:
 
 ```go
-// pkg/events/economy.go
+// pkg/events/stat_item_deleted.go
 
 package events
 
-import (
-    "fmt"
+import "fmt"
 
-    pb "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/pb"
-)
-
-// EconomyEvent is the typed in-memory representation of an economy telemetry event.
-// It carries server-enriched metadata alongside the raw protobuf payload.
-type EconomyEvent struct {
+// StatItemDeletedEvent is the typed in-memory representation of a stat item deleted event.
+type StatItemDeletedEvent struct {
+    ID              string
+    Version         int64
     Namespace       string
+    Name            string
     UserID          string
+    SessionID       string
+    Timestamp       string
     ServerTimestamp int64
-    SourceIP        string
-    Payload         *pb.CreateEconomyTelemetryRequest // the raw protobuf message
+    Payload         *StatItem // reuse StatItem from stat_item_updated.go
 }
 
 // DeduplicationKey returns a stable string used to identify duplicate events.
-// Adjust the fields to match what makes an economy event unique in your domain.
-func (e *EconomyEvent) DeduplicationKey() string {
-    eventID := ""
+func (e *StatItemDeletedEvent) DeduplicationKey() string {
+    statCode := ""
     if e.Payload != nil {
-        eventID = e.Payload.EventId
+        statCode = e.Payload.StatCode
     }
-    return fmt.Sprintf("economy:%s:%s:%s", e.Namespace, e.UserID, eventID)
+    return fmt.Sprintf("stat_item_deleted:%s:%s:%s:%s", e.Namespace, e.UserID, e.Timestamp, statCode)
 }
 
 // ToDocument returns the event as a flat map suitable for JSON/BSON serialization.
-// Add or remove fields here to control what is stored by all backends.
-func (e *EconomyEvent) ToDocument() map[string]interface{} {
+func (e *StatItemDeletedEvent) ToDocument() map[string]interface{} {
     doc := map[string]interface{}{
-        "kind":             "economy",
+        "kind":             "stat_item_deleted",
         "namespace":        e.Namespace,
         "user_id":          e.UserID,
         "server_timestamp": e.ServerTimestamp,
-        "source_ip":        e.SourceIP,
     }
     if e.Payload != nil {
-        doc["event_id"]  = e.Payload.EventId
-        doc["timestamp"] = e.Payload.Timestamp
-        doc["payload"]   = e.Payload
+        doc["event_id"]   = e.ID
+        doc["event_name"] = e.Name
+        doc["version"]    = e.Version
+        doc["timestamp"]  = e.Timestamp
+        doc["session_id"] = e.SessionID
+        doc["payload"]    = map[string]interface{}{
+            "stat_code":    e.Payload.StatCode,
+            "user_id":      e.Payload.UserId,
+            "latest_value": e.Payload.LatestValue,
+        }
     }
     return doc
 }
 ```
 
-`DeduplicationKey()` and `ToDocument()` are the only two methods that the generic
-infrastructure (`Processor`, `Deduplicator`) requires from an event type. Everything else
-is up to the plugin author.
+`DeduplicationKey()` and `ToDocument()` are the only two methods the generic infrastructure (`Processor`, `Deduplicator`) requires. Everything else is up to the plugin author.
 
-### Step 2 — Create plugin files
+### Step 3 — Create the gRPC service handler
 
-For each storage backend you want to support, add an `economy.go` file. The structure
-mirrors the existing files exactly — only the type names and event-specific fields change.
+Create `pkg/service/stat_item_deleted.go`. This implements the generated server interface for the event:
+
+```go
+// pkg/service/stat_item_deleted.go
+
+package service
+
+import (
+    "context"
+    "log/slog"
+    "time"
+
+    "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/events"
+    statistic "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/pb/accelbyte-asyncapi/social/statistic/v1"
+    "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/processor"
+
+    "google.golang.org/grpc/codes"
+    "google.golang.org/grpc/status"
+    "google.golang.org/protobuf/types/known/emptypb"
+)
+
+type StatItemDeletedService struct {
+    statistic.UnimplementedStatisticStatItemDeletedServiceServer
+    namespace string
+    proc      *processor.Processor[*events.StatItemDeletedEvent]
+    logger    *slog.Logger
+}
+
+func NewStatItemDeletedService(
+    namespace string,
+    proc *processor.Processor[*events.StatItemDeletedEvent],
+    logger *slog.Logger,
+) *StatItemDeletedService {
+    return &StatItemDeletedService{
+        namespace: namespace,
+        proc:      proc,
+        logger:    logger.With("component", "stat_item_deleted_service"),
+    }
+}
+
+func (s *StatItemDeletedService) OnMessage(ctx context.Context, req *statistic.StatItemDeleted) (*emptypb.Empty, error) {
+    if req == nil {
+        return nil, status.Error(codes.InvalidArgument, "request is required")
+    }
+
+    namespace := req.Namespace
+    if namespace == "" {
+        namespace = s.namespace
+    }
+
+    event := &events.StatItemDeletedEvent{
+        ID:              req.Id,
+        Name:            req.Name,
+        Namespace:       namespace,
+        UserID:          req.UserId,
+        SessionID:       req.SessionId,
+        Timestamp:       req.Timestamp,
+        ServerTimestamp: time.Now().UnixMilli(),
+        Payload: &events.StatItem{
+            StatCode:    req.Payload.GetStatCode(),
+            UserId:      req.Payload.GetUserId(),
+            LatestValue: req.Payload.GetLatestValue(),
+        },
+    }
+
+    if err := s.proc.Submit(event); err != nil {
+        s.logger.Error("failed to submit stat_item_deleted event",
+            "error", err, "namespace", event.Namespace, "user_id", event.UserID)
+        return nil, status.Error(codes.Internal, "failed to process event")
+    }
+    return &emptypb.Empty{}, nil
+}
+```
+
+### Step 4 — Create plugin files
+
+For each storage backend you want to support, add a plugin file. Use the existing `stat_item_updated.go` files as your template — only the type names and event-specific fields change.
 
 Below is a complete example for the **Postgres** backend:
 
 ```go
-// pkg/storage/plugins/postgres/economy.go
+// pkg/storage/plugins/postgres/stat_item_deleted.go
 
 package postgres
 
@@ -173,70 +263,57 @@ import (
     _ "github.com/lib/pq"
 )
 
-// EconomyPluginConfig holds Postgres configuration for the economy plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// DSNs, tables, or pool sizes per event category.
-type EconomyPluginConfig struct {
-    DSN     string // required
-    Table   string // default "economy_events"
-    Workers int    // connection pool size; default 2
+type StatItemDeletedPluginConfig struct {
+    DSN     string
+    Table   string // default "stat_item_deleted_events"
+    Workers int
 }
 
-// EconomyPlugin stores economy telemetry events in a PostgreSQL table.
-// It manages its own database connection and is fully independent of sibling Postgres plugins.
-type EconomyPlugin struct {
-    cfg    EconomyPluginConfig
+type StatItemDeletedPlugin struct {
+    cfg    StatItemDeletedPluginConfig
     db     *sql.DB
     logger *slog.Logger
 }
 
-// NewEconomyPlugin creates a Postgres plugin for economy events.
-func NewEconomyPlugin(cfg EconomyPluginConfig) storage.StoragePlugin[*events.EconomyEvent] {
+func NewStatItemDeletedPlugin(cfg StatItemDeletedPluginConfig) storage.StoragePlugin[*events.StatItemDeletedEvent] {
     if cfg.Table == "" {
-        cfg.Table = "economy_events"
+        cfg.Table = "stat_item_deleted_events"
     }
     if cfg.Workers <= 0 {
         cfg.Workers = 2
     }
-    return &EconomyPlugin{cfg: cfg}
+    return &StatItemDeletedPlugin{cfg: cfg}
 }
 
-func (p *EconomyPlugin) Name() string { return "postgres:economy" }
+func (p *StatItemDeletedPlugin) Name() string { return "postgres:stat_item_deleted" }
 
-func (p *EconomyPlugin) Initialize(ctx context.Context) error {
+func (p *StatItemDeletedPlugin) Initialize(ctx context.Context) error {
     p.logger = slog.Default().With("plugin", p.Name())
-
     if p.cfg.DSN == "" {
         return fmt.Errorf("postgres DSN is required")
     }
-
     db, err := sql.Open("postgres", p.cfg.DSN)
     if err != nil {
         return fmt.Errorf("failed to open database: %w", err)
     }
-
     maxOpenConns := p.cfg.Workers * 2
     if maxOpenConns < 10 {
         maxOpenConns = 10
     }
     db.SetMaxOpenConns(maxOpenConns)
     db.SetMaxIdleConns(maxOpenConns / 2)
-
     if err := db.PingContext(ctx); err != nil {
         return fmt.Errorf("failed to ping database: %w", err)
     }
-
     p.db = db
-
     if err := p.createTableIfNotExists(ctx); err != nil {
         return fmt.Errorf("failed to create table %s: %w", p.cfg.Table, err)
     }
-
     p.logger.Info("postgres plugin initialized", "table", p.cfg.Table, "max_open_conns", maxOpenConns)
     return nil
 }
 
-func (p *EconomyPlugin) createTableIfNotExists(ctx context.Context) error {
+func (p *StatItemDeletedPlugin) createTableIfNotExists(ctx context.Context) error {
     query := fmt.Sprintf(`
         CREATE TABLE IF NOT EXISTS %s (
             id               BIGSERIAL PRIMARY KEY,
@@ -246,10 +323,8 @@ func (p *EconomyPlugin) createTableIfNotExists(ctx context.Context) error {
             timestamp        VARCHAR(255),
             server_timestamp BIGINT NOT NULL,
             payload          JSONB NOT NULL,
-            source_ip        VARCHAR(45),
             created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
-
         CREATE INDEX IF NOT EXISTS idx_%s_namespace_ts ON %s(namespace, server_timestamp DESC);
         CREATE INDEX IF NOT EXISTS idx_%s_user_id      ON %s(user_id);
         CREATE INDEX IF NOT EXISTS idx_%s_payload      ON %s USING GIN(payload);
@@ -257,7 +332,6 @@ func (p *EconomyPlugin) createTableIfNotExists(ctx context.Context) error {
         p.cfg.Table, p.cfg.Table,
         p.cfg.Table, p.cfg.Table,
         p.cfg.Table, p.cfg.Table)
-
     _, err := p.db.ExecContext(ctx, query)
     return err
 }
@@ -268,15 +342,15 @@ func (p *EconomyPlugin) createTableIfNotExists(ctx context.Context) error {
 // Implement custom filtering logic here. Return false to skip an event.
 // For example, filter out events from certain namespaces or users.
 // ------------------------------------------------------------------------------
-func (p *EconomyPlugin) Filter(_ *events.EconomyEvent) bool { return true }
+func (p *StatItemDeletedPlugin) Filter(_ *events.StatItemDeletedEvent) bool { return true }
 
-// transform converts an EconomyEvent into a row map for Postgres insertion.
+// transform converts a StatItemDeletedEvent into a row map for Postgres insertion.
 // ------------------------------------------------------------------------------
 // DEVELOPER NOTE:
 // Customize this method to reshape events before storage.
 // For example, extract additional fields or apply data masking.
 // ------------------------------------------------------------------------------
-func (p *EconomyPlugin) transform(e *events.EconomyEvent) (map[string]interface{}, error) {
+func (p *StatItemDeletedPlugin) transform(e *events.StatItemDeletedEvent) (map[string]interface{}, error) {
     doc := e.ToDocument()
     payloadJSON, err := json.Marshal(doc["payload"])
     if err != nil {
@@ -289,15 +363,13 @@ func (p *EconomyPlugin) transform(e *events.EconomyEvent) (map[string]interface{
         "timestamp":        doc["timestamp"],
         "server_timestamp": doc["server_timestamp"],
         "payload":          string(payloadJSON),
-        "source_ip":        doc["source_ip"],
     }, nil
 }
 
-func (p *EconomyPlugin) WriteBatch(ctx context.Context, evts []*events.EconomyEvent) (int, error) {
+func (p *StatItemDeletedPlugin) WriteBatch(ctx context.Context, evts []*events.StatItemDeletedEvent) (int, error) {
     if len(evts) == 0 {
         return 0, nil
     }
-
     tx, err := p.db.BeginTx(ctx, nil)
     if err != nil {
         return 0, fmt.Errorf("failed to begin transaction: %w", err)
@@ -305,7 +377,7 @@ func (p *EconomyPlugin) WriteBatch(ctx context.Context, evts []*events.EconomyEv
     defer tx.Rollback()
 
     valueStrings := make([]string, 0, len(evts))
-    valueArgs := make([]interface{}, 0, len(evts)*7)
+    valueArgs := make([]interface{}, 0, len(evts)*6)
     argPos := 1
 
     for _, e := range evts {
@@ -315,22 +387,18 @@ func (p *EconomyPlugin) WriteBatch(ctx context.Context, evts []*events.EconomyEv
             continue
         }
         valueStrings = append(valueStrings,
-            fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-                argPos, argPos+1, argPos+2, argPos+3, argPos+4, argPos+5, argPos+6))
+            fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d)", argPos, argPos+1, argPos+2, argPos+3, argPos+4, argPos+5))
         valueArgs = append(valueArgs,
             row["namespace"], row["user_id"], row["event_id"],
-            row["timestamp"], row["server_timestamp"], row["payload"], row["source_ip"])
-        argPos += 7
+            row["timestamp"], row["server_timestamp"], row["payload"])
+        argPos += 6
     }
-
     if len(valueStrings) == 0 {
         return 0, fmt.Errorf("all events failed transformation")
     }
-
     query := fmt.Sprintf(
-        `INSERT INTO %s (namespace, user_id, event_id, timestamp, server_timestamp, payload, source_ip) VALUES %s`,
+        `INSERT INTO %s (namespace, user_id, event_id, timestamp, server_timestamp, payload) VALUES %s`,
         p.cfg.Table, strings.Join(valueStrings, ","))
-
     result, err := tx.ExecContext(ctx, query, valueArgs...)
     if err != nil {
         return 0, fmt.Errorf("failed to insert events: %w", err)
@@ -338,13 +406,12 @@ func (p *EconomyPlugin) WriteBatch(ctx context.Context, evts []*events.EconomyEv
     if err := tx.Commit(); err != nil {
         return 0, fmt.Errorf("failed to commit transaction: %w", err)
     }
-
     rowsAffected, _ := result.RowsAffected()
     p.logger.Info("batch written to postgres", "table", p.cfg.Table, "count", rowsAffected)
     return int(rowsAffected), nil
 }
 
-func (p *EconomyPlugin) Close() error {
+func (p *StatItemDeletedPlugin) Close() error {
     p.logger.Info("postgres plugin closing", "table", p.cfg.Table)
     if p.db != nil {
         return p.db.Close()
@@ -352,243 +419,174 @@ func (p *EconomyPlugin) Close() error {
     return nil
 }
 
-func (p *EconomyPlugin) HealthCheck(ctx context.Context) error {
+func (p *StatItemDeletedPlugin) HealthCheck(ctx context.Context) error {
     return p.db.PingContext(ctx)
 }
 ```
 
-Repeat the same structure for any other backend (`kafka/economy.go`, `mongodb/economy.go`,
-`s3/economy.go`), adjusting only the connection type and the write logic. The config struct,
-the `Filter` method, and the `transform`/`WriteBatch` skeleton are the same in every file.
+Repeat the same structure for any other backend (`kafka/stat_item_deleted.go`, `mongodb/stat_item_deleted.go`, `s3/stat_item_deleted.go`), adjusting only the connection type and write logic. Use the corresponding `stat_item_updated.go` in each backend package as your template.
 
-### Step 3 — Wire into bootstrap layer
+### Step 5 — Wire into bootstrap layer
 
-**Critical:** Plugins are registered in `internal/bootstrap/plugins.go`, NOT in `main.go`. You need to:
-
-1. Add the new event type to the `StoragePlugins` struct
-2. Add initialization logic in the `InitializeStoragePlugins` function
-3. Add cleanup logic in the `CloseStoragePlugins` function
-4. Add processor initialization in `internal/bootstrap/processor.go`
+**Critical:** Plugins are registered in `internal/bootstrap/plugins.go`, NOT in `main.go`.
 
 #### A. Update the StoragePlugins struct
 
 ```go
 // internal/bootstrap/plugins.go
 
-// StoragePlugins holds all initialized storage plugins for each event type
 type StoragePlugins struct {
-	UserBehavior []storage.StoragePlugin[*events.UserBehaviorEvent]
-	Gameplay     []storage.StoragePlugin[*events.GameplayEvent]
-	Performance  []storage.StoragePlugin[*events.PerformanceEvent]
-	Economy      []storage.StoragePlugin[*events.EconomyEvent]  // ADD THIS
+    StatItemUpdated []storage.StoragePlugin[*events.StatItemUpdatedEvent]
+    StatItemDeleted []storage.StoragePlugin[*events.StatItemDeletedEvent]  // ADD THIS
 }
 ```
 
 #### B. Add initialization in InitializeStoragePlugins
 
-Inside the `InitializeStoragePlugins` function, add your economy plugin to each backend case:
-
 ```go
-// internal/bootstrap/plugins.go
+plugins := &StoragePlugins{
+    StatItemUpdated: []storage.StoragePlugin[*events.StatItemUpdatedEvent]{},
+    StatItemDeleted: []storage.StoragePlugin[*events.StatItemDeletedEvent]{},  // ADD THIS
+}
 
-func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger *slog.Logger) (*StoragePlugins, error) {
-	plugins := &StoragePlugins{
-		UserBehavior: []storage.StoragePlugin[*events.UserBehaviorEvent]{},
-		Gameplay:     []storage.StoragePlugin[*events.GameplayEvent]{},
-		Performance:  []storage.StoragePlugin[*events.PerformanceEvent]{},
-		Economy:      []storage.StoragePlugin[*events.EconomyEvent]{},  // ADD THIS
-	}
+for _, pluginName := range appCfg.GetEnabledPlugins() {
+    var (
+        siuPlugin storage.StoragePlugin[*events.StatItemUpdatedEvent]
+        sidPlugin storage.StoragePlugin[*events.StatItemDeletedEvent]  // ADD THIS
+    )
 
-	for _, pluginName := range appCfg.GetEnabledPlugins() {
-		var (
-			ubPlugin   storage.StoragePlugin[*events.UserBehaviorEvent]
-			gpPlugin   storage.StoragePlugin[*events.GameplayEvent]
-			perfPlugin storage.StoragePlugin[*events.PerformanceEvent]
-			econPlugin storage.StoragePlugin[*events.EconomyEvent]  // ADD THIS
-		)
+    switch pluginName {
+    case "postgres":
+        siuPlugin = postgres.NewStatItemUpdatedPlugin(...)
+        sidPlugin = postgres.NewStatItemDeletedPlugin(postgres.StatItemDeletedPluginConfig{  // ADD THIS
+            DSN:     appCfg.Storage.Postgres.PostgresDSN,
+            Table:   "stat_item_deleted_events",
+            Workers: appCfg.Storage.Postgres.Workers,
+        })
+    // ... repeat for s3, kafka, mongodb, noop cases ...
+    }
 
-		switch pluginName {
-		case "postgres":
-			// ... existing plugins ...
-			econPlugin = postgres.NewEconomyPlugin(postgres.EconomyPluginConfig{
-				DSN:     appCfg.Storage.Postgres.PostgresDSN,
-				Table:   "economy_events",
-				Workers: appCfg.Storage.Postgres.Workers,
-			})
+    // Initialize and append
+    if err := sidPlugin.Initialize(ctx); err != nil {
+        return nil, err
+    }
+    logger.Info("plugin initialized", "plugin", sidPlugin.Name())
+    plugins.StatItemDeleted = append(plugins.StatItemDeleted, sidPlugin)
+}
 
-		case "s3":
-			// ... existing plugins ...
-			econPlugin = s3.NewEconomyPlugin(s3.EconomyPluginConfig{
-				Bucket:   appCfg.Storage.S3.S3Bucket,
-				Prefix:   appCfg.Storage.S3.S3Prefix,
-				Region:   appCfg.Storage.S3.S3Region,
-				Endpoint: appCfg.Storage.S3.S3Endpoint,
-			})
-
-		case "noop":
-			// ... existing plugins ...
-			econPlugin = noop.NewNoopPlugin[*events.EconomyEvent]()
-
-		// Add for other backends as needed
-		}
-
-		// Initialize the plugin
-		if err := econPlugin.Initialize(ctx); err != nil {
-			return nil, err
-		}
-		logger.Info("plugin initialized", "plugin", econPlugin.Name())
-
-		// Add to the plugins list
-		plugins.Economy = append(plugins.Economy, econPlugin)  // ADD THIS
-		// ... existing appends for ubPlugin, gpPlugin, perfPlugin ...
-	}
-
-	// Update the noop fallback logic
-	if len(plugins.UserBehavior) == 0 {
-		// ... existing noop initialization ...
-		noopEcon := noop.NewNoopPlugin[*events.EconomyEvent]()
-		noopEcon.Initialize(ctx)
-		plugins.Economy = append(plugins.Economy, noopEcon)  // ADD THIS
-	}
-
-	logger.Info("storage plugins ready",
-		"user_behavior", len(plugins.UserBehavior),
-		"gameplay", len(plugins.Gameplay),
-		"performance", len(plugins.Performance),
-		"economy", len(plugins.Economy))  // ADD THIS
-
-	return plugins, nil
+// Noop fallback
+if len(plugins.StatItemUpdated) == 0 {
+    // ... existing noop initialization ...
+    noopSID := noop.NewNoopPlugin[*events.StatItemDeletedEvent]()
+    noopSID.Initialize(ctx)
+    plugins.StatItemDeleted = append(plugins.StatItemDeleted, noopSID)
 }
 ```
 
 #### C. Add cleanup in CloseStoragePlugins
 
 ```go
-// internal/bootstrap/plugins.go
-
-func CloseStoragePlugins(plugins *StoragePlugins, logger *slog.Logger) {
-	// ... existing close logic for other types ...
-	
-	for _, p := range plugins.Economy {  // ADD THIS
-		if err := p.Close(); err != nil {
-			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
-		}
-	}
+for _, p := range plugins.StatItemDeleted {
+    if err := p.Close(); err != nil {
+        logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
+    }
 }
 ```
 
-#### D. Add processor initialization
-
-Create `internal/bootstrap/processor.go` modifications:
+#### D. Add processor initialization (`internal/bootstrap/processor.go`)
 
 ```go
-// internal/bootstrap/processor.go
-
 type Processors struct {
-	UserBehavior *processor.Processor[*events.UserBehaviorEvent]
-	Gameplay     *processor.Processor[*events.GameplayEvent]
-	Performance  *processor.Processor[*events.PerformanceEvent]
-	Economy      *processor.Processor[*events.EconomyEvent]  // ADD THIS
+    StatItemUpdated *processor.Processor[*events.StatItemUpdatedEvent]
+    StatItemDeleted *processor.Processor[*events.StatItemDeletedEvent]  // ADD THIS
 }
 
-func InitializeProcessors(
-	cfg *config.Config,
-	plugins *StoragePlugins,
-	dedups *Deduplicators,
-	logger *slog.Logger,
-) *Processors {
-	processorCfg := processor.Config{
-		Workers:       cfg.Processor.Workers,
-		ChannelBuffer: cfg.Processor.ChannelBuffer,
-		BatchSize:     cfg.Processor.DefaultBatchSize,
-		FlushInterval: cfg.Processor.DefaultFlushInterval,
-	}
-
-	// ... existing processors ...
-
-	// ADD THIS:
-	economyProc := processor.NewProcessor(processorCfg, plugins.Economy, dedups.Economy, logger)
-	economyProc.Start()
-
-	return &Processors{
-		UserBehavior: ubProc,
-		Gameplay:     gpProc,
-		Performance:  perfProc,
-		Economy:      economyProc,  // ADD THIS
-	}
+func InitializeProcessors(...) *Processors {
+    procs := &Processors{
+        StatItemUpdated: processor.NewProcessor(processorCfg, plugins.StatItemUpdated, dedups.StatItemUpdated, logger),
+        StatItemDeleted: processor.NewProcessor(processorCfg, plugins.StatItemDeleted, dedups.StatItemDeleted, logger),  // ADD THIS
+    }
+    procs.StatItemUpdated.Start()
+    procs.StatItemDeleted.Start()  // ADD THIS
+    return procs
 }
 
 func ShutdownProcessors(procs *Processors, timeout time.Duration, logger *slog.Logger) {
-	// ... existing shutdown logic ...
-	procs.Economy.Stop(timeout)  // ADD THIS
+    // ... existing ...
+    if err := procs.StatItemDeleted.Shutdown(timeout); err != nil {  // ADD THIS
+        logger.Error("stat_item_deleted processor shutdown error", "error", err)
+    }
 }
 ```
 
-#### E. Add deduplicator initialization
+#### E. Add deduplicator initialization (`internal/bootstrap/deduplicator.go`)
 
 ```go
-// internal/bootstrap/deduplicator.go
-
 type Deduplicators struct {
-	UserBehavior dedup.Deduplicator[*events.UserBehaviorEvent]
-	Gameplay     dedup.Deduplicator[*events.GameplayEvent]
-	Performance  dedup.Deduplicator[*events.PerformanceEvent]
-	Economy      dedup.Deduplicator[*events.EconomyEvent]  // ADD THIS
+    StatItemUpdated dedup.Deduplicator[*events.StatItemUpdatedEvent]
+    StatItemDeleted dedup.Deduplicator[*events.StatItemDeletedEvent]  // ADD THIS
 }
 
-func InitializeDeduplicators(cfg *config.Config, logger *slog.Logger) *Deduplicators {
-	// ... existing logic ...
-	return &Deduplicators{
-		UserBehavior: ubDedup,
-		Gameplay:     gpDedup,
-		Performance:  perfDedup,
-		Economy:      buildDeduplicator[*events.EconomyEvent](cfg, logger),  // ADD THIS
-	}
+func InitializeDeduplicators(appCfg *config.Config, logger *slog.Logger) *Deduplicators {
+    return &Deduplicators{
+        StatItemUpdated: buildDeduplicator[*events.StatItemUpdatedEvent](appCfg, logger),
+        StatItemDeleted: buildDeduplicator[*events.StatItemDeletedEvent](appCfg, logger),  // ADD THIS
+    }
+}
+
+func CloseDeduplicators(dedups *Deduplicators, logger *slog.Logger) {
+    // ... existing ...
+    if err := dedups.StatItemDeleted.Close(); err != nil {  // ADD THIS
+        logger.Error("stat_item_deleted deduplicator close error", "error", err)
+    }
 }
 ```
 
-The `Processor`, `Batcher`, and `Deduplicator` are all generic — they automatically handle
-any event type that implements `DeduplicationKey()` without needing changes.
+#### F. Register the gRPC service (`internal/app/app.go`)
+
+```go
+statItemDeletedSvc := service.NewStatItemDeletedService(
+    bootstrap.GetNamespace(),
+    app.processors.StatItemDeleted,
+    app.logger,
+)
+statistic.RegisterStatisticStatItemDeletedServiceServer(grpcServer, statItemDeletedSvc)
+```
+
+The `Processor`, `Batcher`, and `Deduplicator` are all generic — they automatically handle any event type that implements `DeduplicationKey()` without needing changes.
 
 ---
 
 ## Adding a New Storage Backend
 
-This section shows how to add a completely new storage backend. We'll use **Google BigQuery**
-as the example.
+This section shows how to add a completely new storage backend. We'll use **Google BigQuery** as the example.
 
 ### Overview
 
 Adding a new storage backend requires:
 1. Creating plugin files in `pkg/storage/plugins/<backend>/`
-2. Wiring the backend in `internal/bootstrap/plugins.go`
-3. Adding configuration in `pkg/config/config.go`
-4. (Optional) Adding environment variables documentation
-
-Let's walk through each step.
+2. Adding configuration in `pkg/config/config.go`
+3. Wiring the backend in `internal/bootstrap/plugins.go`
 
 ### Step 1 — Add the dependency
-
-Add the necessary Go module dependency:
 
 ```bash
 go get cloud.google.com/go/bigquery
 ```
 
-### Step 2 — Create the package and plugin files
+### Step 2 — Create the plugin package
 
-Create a directory `pkg/storage/plugins/bigquery/`. Add one file per telemetry type.
-Below is a complete implementation for [gameplay.go](gameplay.go):
+Create a directory `pkg/storage/plugins/bigquery/`. Add one file per event type you handle. Below is a skeleton for `stat_item_updated.go`:
 
 ```go
-// pkg/storage/plugins/bigquery/gameplay.go
+// pkg/storage/plugins/bigquery/stat_item_updated.go
 
 package bigquery
 
 import (
     "context"
-    "encoding/json"
     "fmt"
+    "log/slog"
 
     "cloud.google.com/go/bigquery"
 
@@ -596,77 +594,64 @@ import (
     "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/storage"
 )
 
-// GameplayPluginConfig holds BigQuery configuration for the gameplay plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// projects, datasets, or tables per event category.
-type GameplayPluginConfig struct {
+type StatItemUpdatedPluginConfig struct {
     ProjectID string // required
     DatasetID string // required
-    TableID   string // default "gameplay_events"
+    TableID   string // default "stat_item_updated_events"
 }
 
-// gameplayRow defines the BigQuery schema via struct field tags.
-// Adjust the fields to match what you want stored in BigQuery.
-type gameplayRow struct {
+type statItemUpdatedRow struct {
     Namespace       string `bigquery:"namespace"`
     UserID          string `bigquery:"user_id"`
     EventID         string `bigquery:"event_id"`
     Timestamp       string `bigquery:"timestamp"`
     ServerTimestamp int64  `bigquery:"server_timestamp"`
-    Payload         string `bigquery:"payload"` // JSON-encoded string
-    SourceIP        string `bigquery:"source_ip"`
+    Payload         string `bigquery:"payload"` // JSON-encoded
 }
 
-// GameplayPlugin streams gameplay telemetry events to a BigQuery table via the
-// streaming insert API. It manages its own BigQuery client and is fully
-// independent of sibling BigQuery plugins.
-type GameplayPlugin struct {
-    cfg      GameplayPluginConfig
+type StatItemUpdatedPlugin struct {
+    cfg      StatItemUpdatedPluginConfig
     client   *bigquery.Client
     inserter *bigquery.Inserter
     logger   *slog.Logger
 }
 
-// NewGameplayPlugin creates a BigQuery plugin for gameplay events.
-func NewGameplayPlugin(cfg GameplayPluginConfig) storage.StoragePlugin[*events.GameplayEvent] {
+func NewStatItemUpdatedPlugin(cfg StatItemUpdatedPluginConfig) storage.StoragePlugin[*events.StatItemUpdatedEvent] {
     if cfg.TableID == "" {
-        cfg.TableID = "gameplay_events"
+        cfg.TableID = "stat_item_updated_events"
     }
-    return &GameplayPlugin{cfg: cfg}
+    return &StatItemUpdatedPlugin{cfg: cfg}
 }
 
-func (p *GameplayPlugin) Name() string { 
-    // name your plugin here
- }
+func (p *StatItemUpdatedPlugin) Name() string { return "bigquery:stat_item_updated" }
 
-func (p *GameplayPlugin) Initialize(ctx context.Context) error {
-    // initialize the BigQuery client here
+func (p *StatItemUpdatedPlugin) Initialize(ctx context.Context) error {
+    p.logger = slog.Default().With("plugin", p.Name())
+    // initialize BigQuery client and inserter here
+    return nil
 }
 
-func (p *GameplayPlugin) Filter(e *events.GameplayEvent) bool { 
-    // implement custom filtering logic here. For example:
-    // if e.Platform.Mobile {
-    //     return false // skip mobile events for this plugin
-    // }
-    // return true 
+// Filter determines if an event should be processed by this plugin.
+// ------------------------------------------------------------------------------
+// DEVELOPER NOTE:
+// Implement custom filtering logic here. Return false to skip an event.
+// For example, filter out events from certain namespaces or users.
+// ------------------------------------------------------------------------------
+func (p *StatItemUpdatedPlugin) Filter(_ *events.StatItemUpdatedEvent) bool { return true }
+
+func (p *StatItemUpdatedPlugin) WriteBatch(ctx context.Context, evts []*events.StatItemUpdatedEvent) (int, error) {
+    // implement batch writing using p.inserter.Put(ctx, rows)
+    return 0, nil
 }
 
-func (p *GameplayPlugin) transform(e *events.GameplayEvent) (gameplayRow, error) {
-    // implement transformation logic here, e.g., JSON-encode the payload
-}
-
-func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.GameplayEvent) (int, error) {
-    // implement batch writing logic here using p.inserter.Put(ctx, rows)
-}
-
-func (p *GameplayPlugin) Close() error {
+func (p *StatItemUpdatedPlugin) Close() error {
     if p.client != nil {
         return p.client.Close()
     }
     return nil
 }
 
-func (p *GameplayPlugin) HealthCheck(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) HealthCheck(ctx context.Context) error {
     _, err := p.client.Dataset(p.cfg.DatasetID).Metadata(ctx)
     if err != nil {
         return fmt.Errorf("bigquery health check failed: %w", err)
@@ -675,17 +660,13 @@ func (p *GameplayPlugin) HealthCheck(ctx context.Context) error {
 }
 ```
 
-Create `user_behavior.go` and `performance.go` in the same package following the same
-structure, substituting `UserBehaviorEvent`/`PerformanceEvent` for `GameplayEvent` and
-naming the row struct and plugin accordingly.
+Create one file per event type you handle, following the same structure.
 
 ### Step 3 — Add configuration
 
 Add BigQuery configuration to `pkg/config/config.go`:
 
 ```go
-// pkg/config/config.go
-
 type StorageConfig struct {
     Postgres PostgresConfig `envPrefix:"POSTGRES_"`
     S3       S3Config       `envPrefix:"S3_"`
@@ -695,95 +676,56 @@ type StorageConfig struct {
     Plugins  string         `env:"PLUGINS" envDefault:""`
 }
 
-// ADD THIS struct:
 type BigQueryConfig struct {
     ProjectID string `env:"PROJECT_ID"`
     DatasetID string `env:"DATASET_ID"`
 }
 ```
 
-Now you can set environment variables like:
-- `STORAGE_BIGQUERY_PROJECT_ID=my-project`
-- `STORAGE_BIGQUERY_DATASET_ID=telemetry_data`
-
 ### Step 4 — Wire into bootstrap layer
 
 Add the `bigquery` case to the plugin switch in `internal/bootstrap/plugins.go`:
 
 ```go
-// internal/bootstrap/plugins.go
-
 import (
     // ... existing imports ...
     "github.com/agriardyan/extend-game-telemetry-collector-event-handler/pkg/storage/plugins/bigquery"
 )
 
-func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger *slog.Logger) (*StoragePlugins, error) {
-    // ... existing code ...
-
-    for _, pluginName := range appCfg.GetEnabledPlugins() {
-        // ... existing variable declarations ...
-
-        switch pluginName {
-        // ... existing cases for postgres, s3, kafka, mongodb, noop ...
-
-        case "bigquery":  // ADD THIS CASE
-            ubPlugin = bigquery.NewUserBehaviorPlugin(bigquery.UserBehaviorPluginConfig{
-                ProjectID: appCfg.Storage.BigQuery.ProjectID,
-                DatasetID: appCfg.Storage.BigQuery.DatasetID,
-                TableID:   "user_behavior_events",
-            })
-            gpPlugin = bigquery.NewGameplayPlugin(bigquery.GameplayPluginConfig{
-                ProjectID: appCfg.Storage.BigQuery.ProjectID,
-                DatasetID: appCfg.Storage.BigQuery.DatasetID,
-                TableID:   "gameplay_events",
-            })
-            perfPlugin = bigquery.NewPerformancePlugin(bigquery.PerformancePluginConfig{
-                ProjectID: appCfg.Storage.BigQuery.ProjectID,
-                DatasetID: appCfg.Storage.BigQuery.DatasetID,
-                TableID:   "performance_events",
-            })
-
-        default:
-            logger.Error("unknown plugin", "plugin", pluginName)
-            continue
-        }
-
-        // ... rest of initialization code ...
-    }
-
-    return plugins, nil
-}
+case "bigquery":
+    siuPlugin = bigquery.NewStatItemUpdatedPlugin(bigquery.StatItemUpdatedPluginConfig{
+        ProjectID: appCfg.Storage.BigQuery.ProjectID,
+        DatasetID: appCfg.Storage.BigQuery.DatasetID,
+        TableID:   "stat_item_updated_events",
+    })
+    // add one line per event type you handle
 ```
 
 ### Step 5 — Enable the plugin
 
-Set the environment variable to enable your new backend:
-
 ```bash
-export STORAGE_PLUGINS=bigquery
-# or combine with existing: STORAGE_PLUGINS=postgres,bigquery
+export STORAGE_ENABLED_PLUGINS=bigquery
+# or combine with existing: STORAGE_ENABLED_PLUGINS=postgres,bigquery
 ```
-
-Create `user_behavior.go` and `performance.go` in the same package following the same
-structure, substituting `UserBehaviorEvent`/`PerformanceEvent` for `GameplayEvent` and
-naming the row struct and plugin accordingly.
 
 ---
 
 ## Quick Reference
 
-### Files to Modify When Adding a New Telemetry Type
+### Files to Modify When Handling a New AGS Event Type
 
-1. **`pkg/events/<type>.go`** — Event wrapper with `DeduplicationKey()` and `ToDocument()`
-2. **`pkg/storage/plugins/<backend>/<type>.go`** — One file per backend
-3. **`internal/bootstrap/plugins.go`** — Add to `StoragePlugins` struct and initialization
-4. **`internal/bootstrap/processor.go`** — Add processor for the new type
-5. **`internal/bootstrap/deduplicator.go`** — Add deduplicator for the new type
+1. **`pkg/proto/accelbyte-asyncapi/<service>/`** — Copy proto from AGS catalogue and regenerate
+2. **`pkg/events/<type>.go`** — Event wrapper with `DeduplicationKey()` and `ToDocument()`
+3. **`pkg/service/<type>.go`** — gRPC handler implementing the generated `OnMessage` interface
+4. **`pkg/storage/plugins/<backend>/<type>.go`** — One file per backend
+5. **`internal/bootstrap/plugins.go`** — Add to `StoragePlugins` struct and initialization
+6. **`internal/bootstrap/processor.go`** — Add processor for the new type
+7. **`internal/bootstrap/deduplicator.go`** — Add deduplicator for the new type
+8. **`internal/app/app.go`** — Register the new gRPC service
 
 ### Files to Modify When Adding a New Storage Backend
 
-1. **`pkg/storage/plugins/<backend>/<type>.go`** — Create plugin files (one per telemetry type)
+1. **`pkg/storage/plugins/<backend>/<type>.go`** — Create plugin files (one per event type)
 2. **`pkg/config/config.go`** — Add config struct for the backend
 3. **`internal/bootstrap/plugins.go`** — Add case in the plugin switch
 
@@ -791,7 +733,7 @@ naming the row struct and plugin accordingly.
 
 ```bash
 # Set environment variables
-export STORAGE_PLUGINS=<your-backend>
+export STORAGE_ENABLED_PLUGINS=<your-backend>
 export STORAGE_<BACKEND>_<CONFIG_KEY>=<value>
 
 # Run the service

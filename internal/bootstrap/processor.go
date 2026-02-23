@@ -15,7 +15,8 @@ import (
 
 // Processors holds processors for each event type
 type Processors struct {
-	StatItemUpdated *processor.Processor[*events.StatItemUpdatedEvent]
+	StatItemUpdated    *processor.Processor[*events.StatItemUpdatedEvent]
+	OauthTokenGenerated *processor.Processor[*events.OauthTokenGeneratedEvent]
 }
 
 // InitializeProcessors creates and starts processors for each event type
@@ -33,10 +34,12 @@ func InitializeProcessors(
 	}
 
 	procs := &Processors{
-		StatItemUpdated: processor.NewProcessor(processorCfg, plugins.StatItemUpdated, dedups.StatItemUpdated, logger),
+		StatItemUpdated:    processor.NewProcessor(processorCfg, plugins.StatItemUpdated, dedups.StatItemUpdated, logger),
+		OauthTokenGenerated: processor.NewProcessor(processorCfg, plugins.OauthTokenGenerated, dedups.OauthTokenGenerated, logger),
 	}
 
 	procs.StatItemUpdated.Start()
+	procs.OauthTokenGenerated.Start()
 
 	logger.Info("async processors started",
 		"workers", processorCfg.Workers,
@@ -51,5 +54,8 @@ func InitializeProcessors(
 func ShutdownProcessors(procs *Processors, timeout time.Duration, logger *slog.Logger) {
 	if err := procs.StatItemUpdated.Shutdown(timeout); err != nil {
 		logger.Error("stat_item_updated processor shutdown error", "error", err)
+	}
+	if err := procs.OauthTokenGenerated.Shutdown(timeout); err != nil {
+		logger.Error("oauth_token_generated processor shutdown error", "error", err)
 	}
 }

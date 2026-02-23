@@ -1,20 +1,20 @@
 # Extend Game Telemetry Collector Event Handler
 
-A plugin-based [Extend Event Handler](https://docs.accelbyte.io/gaming-services/modules/foundations/extend/event-handler/) app for collecting, processing, and storing game telemetry events to one or more storage backends. It exposes a gRPC API to receive AGS events and routes events through a typed storage plugin system. 
+A plugin-based [Extend Event Handler](https://docs.accelbyte.io/gaming-services/modules/foundations/extend/event-handler/) app for collecting, processing, and storing AGS events to one or more storage backends. It exposes a gRPC API to receive events published by AccelByte Gaming Services and routes them through a typed storage plugin system.
 
 ---
 
 ## Why This App?
 
-When it comes to telemetry collection, one size does not fit all. Different games have different event schemas, different processing needs, and different storage backends. Even within the same game, you might want to route different event types to different destinations — for example, sending gameplay events to PostgreSQL, while streaming performance metrics to Kafka.
+When it comes to telemetry collection, one size does not fit all. Different games have different processing needs and different storage backends. Even within the same game, you might want to route different event types to different destinations — for example, sending stat item updates to S3 while streaming them to Kafka simultaneously.
 
-We believe giving control to developers is the best way to enable creativity. This app is not a one-size-fits-all solution; it's a flexible framework that you can extend and customize to fit your game's unique telemetry needs. Whether you want to add new AGS event, implement custom storage backends, or apply specific filtering and transformation logic, this app provides the foundation for you to build on.
+We believe giving control to developers is the best way to enable creativity. This app is not a one-size-fits-all solution; it's a flexible framework that you can extend and customize to fit your game's unique telemetry needs. Whether you want to handle additional AGS event types, implement custom storage backends, or apply specific filtering and transformation logic, this app provides the foundation for you to build on.
 
 ## Flexibility by Design
 
 | What you control | How |
 |---|---|
-| **Endpoint shape** | Choose the protobuf from [AGS event definitions](https://docs.accelbyte.io/gaming-services/knowledge-base/api-events/achievement/) |
+| **AGS event types** | Pick any event from the [AGS event definitions](https://docs.accelbyte.io/gaming-services/knowledge-base/api-events/), add its proto to `pkg/proto/accelbyte-asyncapi/`, and generate the Go code |
 | **Event filtering** | Implement `Filter()` per plugin — drop, sample, or gate events with plain Go |
 | **Data transformation** | Implement your own transformation inside `WriteBatch()` — reshape, enrich, or redact before writing |
 | **Storage destination** | Enable one or more backends: S3, PostgreSQL, Kafka, MongoDB, or a custom implementation |
@@ -29,15 +29,15 @@ Multiple storage plugins run in parallel. A single event stream can go to a data
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│                        Game Clients                           │
+│               AccelByte Gaming Services (AGS)                 │
+│           publishes events via the Kafka Connect              │
 └────────────────────────────┬──────────────────────────────────┘
-                             │  gRPC (gRPC-Gateway)
+                             │  gRPC
                              ▼
 ┌───────────────────────────────────────────────────────────────┐
-│  API Layer                                                    │
+│  gRPC Event Handler Layer                                     │
 │  - AccelByte IAM token validation                             │
-│  - Request validation & server-side enrichment                │
-│    (server timestamp, source IP)                              │
+│  - Event enrichment (server timestamp, etc.)                        │
 │  - Non-blocking response  (<5 ms target latency)              │
 └────────────────────────────┬──────────────────────────────────┘
                              │
@@ -50,7 +50,7 @@ Multiple storage plugins run in parallel. A single event stream can go to a data
                              │
                              ▼
 ┌───────────────────────────────────────────────────────────────┐
-│  Async Processor (one per telemetry type)                     │
+│  Async Processor (one per event type)                         │
 │  - Buffered channel  (default 10 000 events)                  │
 │  - Worker pool       (default 10 goroutines)                  │
 │  - Smart batching    (size OR time trigger)                   │
@@ -72,9 +72,9 @@ Multiple storage plugins run in parallel. A single event stream can go to a data
 
 ## Batch Processing
 
-The API handler returns immediately after pushing the event onto a buffered channel — it does not wait for any storage write. Actual writes happen asynchronously in a worker pool.
+The event handler returns immediately after pushing the event onto a buffered channel — it does not wait for any storage write. Actual writes happen asynchronously in a worker pool.
 
-Each telemetry type has its own processor that runs this pipeline:
+Each event type has its own processor that runs this pipeline:
 
 ```
 incoming event
@@ -102,24 +102,24 @@ On shutdown, each processor drains its remaining events before closing, so no in
 
 ---
 
-## Built-in Telemetry Types
+## Handled AGS Event Types
 
-Two telemetry categories come out of the box, each processed by its own independent pipeline. Add or remove the proto file at `pkg/proto/accelbyte-asyncapi` directory based on AGS Event proto file definitions and then generate the corresponding Go code.
+Event handlers are implemented for the following AGS events. Each type has its own independent processor, deduplicator, and plugin slice.
 
-| Type | Description |
-|---|---|
-| `StatisticStatItemUpdatedService` | Statistic item update for each user |
+| Service | Event | Proto Source |
+|---|---|---|
+| `StatisticStatItemUpdatedService` | Fired when a user's stat item value changes | [accelbyte-api-proto](https://github.com/AccelByte/accelbyte-api-proto/tree/main/asyncapi/accelbyte/social/statistic/v1/statistic.proto) |
 
-Each type has its own processor, deduplicator, and plugin slice, so a spike in one events never delays others processing.
+A spike in one event type never delays processing of another.
 
 ---
 
 ## Built-in Storage Plugins
 
 | Plugin | Use case |
-|---|---|---|
+|---|---|
 | `s3` | Data lake, Athena/Glue/Spark queries |
-| `postgres` | SQL analytics, session replay, JSONB queries |
+| `postgres` | SQL analytics, JSONB queries |
 | `kafka` | Real-time streaming, downstream consumers |
 | `mongodb` | Flexible schema, rich document queries |
 | `noop` | Testing, benchmarking, dry-runs |
@@ -171,21 +171,12 @@ STORAGE_S3_REGION=us-east-1
 go run main.go
 ```
 
-The service starts three listeners:
+The service starts two listeners:
 
 | Port | Protocol | Purpose |
 |---|---|---|
-| `6565` | gRPC | Primary API |
+| `6565` | gRPC | AGS event handler API |
 | `8080` | HTTP | Prometheus metrics (`/metrics`) |
-
-### 4. Send a test event
-
-```bash
-curl -X POST http://localhost:8000/telemetry/v1/gameplay \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"event_id": "evt-001", "user_id": "user-123", "payload": {...}}'
-```
 
 ---
 
@@ -212,9 +203,9 @@ Key variables:
 
 The plugin system is the primary extension point. Two scenarios are fully documented:
 
-1. **Add a new telemetry type** — introduce a new event category (e.g., economy, combat, social) and wire it through the existing processor infrastructure without touching any shared code.
+1. **Handle a new AGS event type** — find the event's proto definition from the [AGS event catalogue](https://docs.accelbyte.io/gaming-services/knowledge-base/api-events/), add it to `pkg/proto/accelbyte-asyncapi/`, generate Go code, implement the event wrapper and storage plugins, then wire it through the bootstrap layer.
 
-2. **Add a new storage backend** — implement the `StoragePlugin[T]` interface and register it, making your backend available to every telemetry type with zero changes to the core.
+2. **Add a new storage backend** — implement the `StoragePlugin[T]` interface and register it, making your backend available to every event type with zero changes to the core.
 
 See **[docs/PLUGIN_DEVELOPMENT.md](docs/PLUGIN_DEVELOPMENT.md)** for step-by-step instructions, complete code examples, and naming conventions.
 
@@ -241,40 +232,39 @@ Each plugin is self-contained — its own config struct, its own connection, its
 - **OpenTelemetry tracing** — gRPC spans with B3 and W3C TraceContext propagation
 - **Structured logging** — `log/slog` with JSON output, configurable log level
 - **Health check** — standard gRPC health protocol on port `6565`
-- **Swagger UI** — interactive API documentation at `http://<host-address>:8000/<base-path>/apidocs/` (e.g `http://localhost:8000/telemetry/apidocs/`)
 
 ---
 
 ## Project Structure
 
 ```
-extend-game-telemetry-collector/
-├── main.go                          # Wiring: plugins → processors → gRPC service
+extend-game-telemetry-collector-event-handler/
+├── main.go                          # Entry point
 ├── config/config.yaml               # Default configuration
+│
+├── internal/
+│   ├── app/                         # Application wiring
+│   └── bootstrap/                   # Plugin, processor, and deduplicator initialization
 │
 ├── pkg/
 │   ├── config/                      # Config loading from env vars + YAML
-│   ├── events/                      # Typed event wrappers (UserBehavior, Gameplay, Performance)
+│   ├── events/                      # Typed event wrappers (one per AGS event type)
 │   ├── dedup/                       # Deduplicator interface + memory/Redis/noop impls
 │   ├── processor/                   # Generic async processor: worker pool + batcher
-│   ├── service/                     # gRPC service handler + event enrichment
+│   ├── service/                     # gRPC service handlers
+│   ├── proto/accelbyte-asyncapi/    # AGS AsyncAPI proto definitions
 │   └── storage/
 │       ├── plugin.go                # StoragePlugin[T] interface
 │       ├── deduplicatable.go        # Deduplicatable constraint
 │       └── plugins/
-│           ├── s3/                  # S3 plugin (user_behavior, gameplay, performance)
+│           ├── s3/                  # S3 plugin
 │           ├── postgres/            # PostgreSQL plugin
 │           ├── kafka/               # Kafka plugin
 │           ├── mongodb/             # MongoDB plugin
 │           └── noop/                # No-op plugin for testing
 │
-├── docs/
-│   ├── PLUGIN_DEVELOPMENT.md        # Guide: add telemetry types and storage backends
-│   ├── STORAGE_PLUGINS.md           # Built-in plugin reference & query examples
-│   ├── CONFIGURATION.md             # Full environment variable reference
-│   └── DESIGN.md                    # Architecture deep-dive
-│
-└── pkg/proto/                       # Protobuf service definitions
+└── docs/
+    └── PLUGIN_DEVELOPMENT.md        # Guide: add AGS event types and storage backends
 ```
 
 ---
@@ -283,8 +273,8 @@ extend-game-telemetry-collector/
 
 | Concern | Library |
 |---|---|
-| API protocol | gRPC + gRPC-Gateway (REST) |
-| Schema | Protocol Buffers v3 |
+| API protocol | gRPC |
+| Schema | Protocol Buffers v3 (AGS AsyncAPI definitions) |
 | Authentication | AccelByte IAM SDK |
 | S3 storage | AWS SDK v2 |
 | PostgreSQL | `lib/pq` |
