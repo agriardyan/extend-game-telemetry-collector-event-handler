@@ -15,17 +15,13 @@ import (
 
 // Deduplicators holds deduplicators for each event type
 type Deduplicators struct {
-	UserBehavior dedup.Deduplicator[*events.UserBehaviorEvent]
-	Gameplay     dedup.Deduplicator[*events.GameplayEvent]
-	Performance  dedup.Deduplicator[*events.PerformanceEvent]
+	StatItemUpdated dedup.Deduplicator[*events.StatItemUpdatedEvent]
 }
 
 // InitializeDeduplicators creates deduplicators based on configuration
 func InitializeDeduplicators(appCfg *config.Config, logger *slog.Logger) *Deduplicators {
 	return &Deduplicators{
-		UserBehavior: buildDeduplicator[*events.UserBehaviorEvent](appCfg, logger),
-		Gameplay:     buildDeduplicator[*events.GameplayEvent](appCfg, logger),
-		Performance:  buildDeduplicator[*events.PerformanceEvent](appCfg, logger),
+		StatItemUpdated: buildDeduplicator[*events.StatItemUpdatedEvent](appCfg, logger),
 	}
 }
 
@@ -55,13 +51,7 @@ func buildDeduplicator[T storage.Deduplicatable](appCfg *config.Config, logger *
 
 // CloseDeduplicators closes all deduplicators gracefully
 func CloseDeduplicators(dedups *Deduplicators, logger *slog.Logger) {
-	if err := dedups.UserBehavior.Close(); err != nil {
-		logger.Error("user_behavior deduplicator close error", "error", err)
-	}
-	if err := dedups.Gameplay.Close(); err != nil {
-		logger.Error("gameplay deduplicator close error", "error", err)
-	}
-	if err := dedups.Performance.Close(); err != nil {
-		logger.Error("performance deduplicator close error", "error", err)
+	if err := dedups.StatItemUpdated.Close(); err != nil {
+		logger.Error("stat_item_updated deduplicator close error", "error", err)
 	}
 }

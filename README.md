@@ -1,6 +1,6 @@
-# extend-game-telemetry-collector
+# Extend Game Telemetry Collector Event Handler
 
-A plugin-based [Extend Service Extension](https://docs.accelbyte.io/gaming-services/modules/foundations/extend/service-extension/customize-service-extension-app/) app for collecting, processing, and storing game telemetry events to one or more storage backends. It exposes a dual-protocol API (gRPC + REST) and routes events through a typed storage plugin system. 
+A plugin-based [Extend Event Handler](https://docs.accelbyte.io/gaming-services/modules/foundations/extend/event-handler/) app for collecting, processing, and storing game telemetry events to one or more storage backends. It exposes a dual-protocol API (gRPC + REST) and routes events through a typed storage plugin system. 
 
 ---
 

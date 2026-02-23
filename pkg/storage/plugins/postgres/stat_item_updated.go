@@ -18,37 +18,34 @@ import (
 	_ "github.com/lib/pq"
 )
 
-// GameplayPluginConfig holds Postgres configuration for the gameplay plugin.
-// Each telemetry type plugin owns its config independently, allowing different
-// DSNs, tables, or pool sizes per event category.
-type GameplayPluginConfig struct {
+// StatItemUpdatedPluginConfig holds Postgres configuration for the stat_item_updated plugin.
+type StatItemUpdatedPluginConfig struct {
 	DSN     string // required, e.g. "postgres://user:pass@host/db?sslmode=disable"
-	Table   string // default "gameplay_events"
+	Table   string // default "stat_item_updated_events"
 	Workers int    // connection pool size; default 2
 }
 
-// GameplayPlugin stores gameplay telemetry events in a PostgreSQL table.
-// It manages its own database connection and is fully independent of sibling Postgres plugins.
-type GameplayPlugin struct {
-	cfg    GameplayPluginConfig
+// StatItemUpdatedPlugin stores stat item updated events in a PostgreSQL table.
+type StatItemUpdatedPlugin struct {
+	cfg    StatItemUpdatedPluginConfig
 	db     *sql.DB
 	logger *slog.Logger
 }
 
-// NewGameplayPlugin creates a Postgres plugin for gameplay events.
-func NewGameplayPlugin(cfg GameplayPluginConfig) storage.StoragePlugin[*events.GameplayEvent] {
+// NewStatItemUpdatedPlugin creates a Postgres plugin for stat_item_updated events.
+func NewStatItemUpdatedPlugin(cfg StatItemUpdatedPluginConfig) storage.StoragePlugin[*events.StatItemUpdatedEvent] {
 	if cfg.Table == "" {
-		cfg.Table = "gameplay_events"
+		cfg.Table = "stat_item_updated_events"
 	}
 	if cfg.Workers <= 0 {
 		cfg.Workers = 2
 	}
-	return &GameplayPlugin{cfg: cfg}
+	return &StatItemUpdatedPlugin{cfg: cfg}
 }
 
-func (p *GameplayPlugin) Name() string { return "postgres:gameplay" }
+func (p *StatItemUpdatedPlugin) Name() string { return "postgres:stat_item_updated" }
 
-func (p *GameplayPlugin) Initialize(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) Initialize(ctx context.Context) error {
 	p.logger = slog.Default().With("plugin", p.Name())
 
 	if p.cfg.DSN == "" {
@@ -81,12 +78,7 @@ func (p *GameplayPlugin) Initialize(ctx context.Context) error {
 	return nil
 }
 
-// createTableIfNotExists ensures the target table and indexes exist before writing data.
-// ----------------------------------------------------------------------------
-// DEVELOPER NOTE: In production, consider using a more robust migration strategy instead of auto-creating tables.
-// This method is simplified for demonstration purposes and may not cover all edge cases.
-// ----------------------------------------------------------------------------
-func (p *GameplayPlugin) createTableIfNotExists(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) createTableIfNotExists(ctx context.Context) error {
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
 			id               BIGSERIAL PRIMARY KEY,
@@ -96,7 +88,6 @@ func (p *GameplayPlugin) createTableIfNotExists(ctx context.Context) error {
 			timestamp        VARCHAR(255),
 			server_timestamp BIGINT NOT NULL,
 			payload          JSONB NOT NULL,
-			source_ip        VARCHAR(45),
 			created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -116,17 +107,10 @@ func (p *GameplayPlugin) createTableIfNotExists(ctx context.Context) error {
 // ------------------------------------------------------------------------------
 // DEVELOPER NOTE:
 // Implement custom filtering logic here. Return false to skip an event.
-// For example, filter out events from certain namespaces or users.
 // ------------------------------------------------------------------------------
-func (p *GameplayPlugin) Filter(_ *events.GameplayEvent) bool { return true }
+func (p *StatItemUpdatedPlugin) Filter(_ *events.StatItemUpdatedEvent) bool { return true }
 
-// transform converts a GameplayEvent into a row map for Postgres insertion.
-// ------------------------------------------------------------------------------
-// DEVELOPER NOTE:
-// Customize this method to reshape events before storage.
-// For example, extract additional fields or apply data masking.
-// ------------------------------------------------------------------------------
-func (p *GameplayPlugin) transform(e *events.GameplayEvent) (map[string]interface{}, error) {
+func (p *StatItemUpdatedPlugin) transform(e *events.StatItemUpdatedEvent) (map[string]interface{}, error) {
 	doc := e.ToDocument()
 	payloadJSON, err := json.Marshal(doc["payload"])
 	if err != nil {
@@ -139,11 +123,10 @@ func (p *GameplayPlugin) transform(e *events.GameplayEvent) (map[string]interfac
 		"timestamp":        doc["timestamp"],
 		"server_timestamp": doc["server_timestamp"],
 		"payload":          string(payloadJSON),
-		"source_ip":        doc["source_ip"],
 	}, nil
 }
 
-func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.GameplayEvent) (int, error) {
+func (p *StatItemUpdatedPlugin) WriteBatch(ctx context.Context, evts []*events.StatItemUpdatedEvent) (int, error) {
 	if len(evts) == 0 {
 		return 0, nil
 	}
@@ -155,7 +138,7 @@ func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.Gameplay
 	defer tx.Rollback()
 
 	valueStrings := make([]string, 0, len(evts))
-	valueArgs := make([]interface{}, 0, len(evts)*7)
+	valueArgs := make([]interface{}, 0, len(evts)*6)
 	argPos := 1
 
 	for _, e := range evts {
@@ -165,12 +148,12 @@ func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.Gameplay
 			continue
 		}
 		valueStrings = append(valueStrings,
-			fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d,$%d)",
-				argPos, argPos+1, argPos+2, argPos+3, argPos+4, argPos+5, argPos+6))
+			fmt.Sprintf("($%d,$%d,$%d,$%d,$%d,$%d)",
+				argPos, argPos+1, argPos+2, argPos+3, argPos+4, argPos+5))
 		valueArgs = append(valueArgs,
 			row["namespace"], row["user_id"], row["event_id"],
-			row["timestamp"], row["server_timestamp"], row["payload"], row["source_ip"])
-		argPos += 7
+			row["timestamp"], row["server_timestamp"], row["payload"])
+		argPos += 6
 	}
 
 	if len(valueStrings) == 0 {
@@ -178,7 +161,7 @@ func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.Gameplay
 	}
 
 	query := fmt.Sprintf(
-		`INSERT INTO %s (namespace, user_id, event_id, timestamp, server_timestamp, payload, source_ip) VALUES %s`,
+		`INSERT INTO %s (namespace, user_id, event_id, timestamp, server_timestamp, payload) VALUES %s`,
 		p.cfg.Table, strings.Join(valueStrings, ","))
 
 	result, err := tx.ExecContext(ctx, query, valueArgs...)
@@ -194,7 +177,7 @@ func (p *GameplayPlugin) WriteBatch(ctx context.Context, evts []*events.Gameplay
 	return int(rowsAffected), nil
 }
 
-func (p *GameplayPlugin) Close() error {
+func (p *StatItemUpdatedPlugin) Close() error {
 	p.logger.Info("postgres plugin closing", "table", p.cfg.Table)
 	if p.db != nil {
 		return p.db.Close()
@@ -202,6 +185,6 @@ func (p *GameplayPlugin) Close() error {
 	return nil
 }
 
-func (p *GameplayPlugin) HealthCheck(ctx context.Context) error {
+func (p *StatItemUpdatedPlugin) HealthCheck(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }

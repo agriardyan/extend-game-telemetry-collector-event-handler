@@ -21,58 +21,30 @@ import (
 
 // StoragePlugins holds all initialized storage plugins for each event type
 type StoragePlugins struct {
-	UserBehavior []storage.StoragePlugin[*events.UserBehaviorEvent]
-	Gameplay     []storage.StoragePlugin[*events.GameplayEvent]
-	Performance  []storage.StoragePlugin[*events.PerformanceEvent]
+	StatItemUpdated []storage.StoragePlugin[*events.StatItemUpdatedEvent]
 }
 
 // InitializeStoragePlugins creates and initializes storage plugins based on configuration
 func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger *slog.Logger) (*StoragePlugins, error) {
 	plugins := &StoragePlugins{
-		UserBehavior: []storage.StoragePlugin[*events.UserBehaviorEvent]{},
-		Gameplay:     []storage.StoragePlugin[*events.GameplayEvent]{},
-		Performance:  []storage.StoragePlugin[*events.PerformanceEvent]{},
+		StatItemUpdated: []storage.StoragePlugin[*events.StatItemUpdatedEvent]{},
 	}
 
 	for _, pluginName := range appCfg.GetEnabledPlugins() {
 		var (
-			ubPlugin   storage.StoragePlugin[*events.UserBehaviorEvent]
-			gpPlugin   storage.StoragePlugin[*events.GameplayEvent]
-			perfPlugin storage.StoragePlugin[*events.PerformanceEvent]
+			siuPlugin storage.StoragePlugin[*events.StatItemUpdatedEvent]
 		)
 
 		switch pluginName {
 		case "postgres":
-			ubPlugin = postgres.NewUserBehaviorPlugin(postgres.UserBehaviorPluginConfig{
+			siuPlugin = postgres.NewStatItemUpdatedPlugin(postgres.StatItemUpdatedPluginConfig{
 				DSN:     appCfg.Storage.Postgres.PostgresDSN,
-				Table:   "user_behavior_events",
-				Workers: appCfg.Storage.Postgres.Workers,
-			})
-			gpPlugin = postgres.NewGameplayPlugin(postgres.GameplayPluginConfig{
-				DSN:     appCfg.Storage.Postgres.PostgresDSN,
-				Table:   "gameplay_events",
-				Workers: appCfg.Storage.Postgres.Workers,
-			})
-			perfPlugin = postgres.NewPerformancePlugin(postgres.PerformancePluginConfig{
-				DSN:     appCfg.Storage.Postgres.PostgresDSN,
-				Table:   "performance_events",
+				Table:   "stat_item_updated_events",
 				Workers: appCfg.Storage.Postgres.Workers,
 			})
 
 		case "s3":
-			ubPlugin = s3.NewUserBehaviorPlugin(s3.UserBehaviorPluginConfig{
-				Bucket:   appCfg.Storage.S3.S3Bucket,
-				Prefix:   appCfg.Storage.S3.S3Prefix,
-				Region:   appCfg.Storage.S3.S3Region,
-				Endpoint: appCfg.Storage.S3.S3Endpoint,
-			})
-			gpPlugin = s3.NewGameplayPlugin(s3.GameplayPluginConfig{
-				Bucket:   appCfg.Storage.S3.S3Bucket,
-				Prefix:   appCfg.Storage.S3.S3Prefix,
-				Region:   appCfg.Storage.S3.S3Region,
-				Endpoint: appCfg.Storage.S3.S3Endpoint,
-			})
-			perfPlugin = s3.NewPerformancePlugin(s3.PerformancePluginConfig{
+			siuPlugin = s3.NewStatItemUpdatedPlugin(s3.StatItemUpdatedPluginConfig{
 				Bucket:   appCfg.Storage.S3.S3Bucket,
 				Prefix:   appCfg.Storage.S3.S3Prefix,
 				Region:   appCfg.Storage.S3.S3Region,
@@ -85,52 +57,24 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 				brokers[i] = strings.TrimSpace(b)
 			}
 			baseTopic := appCfg.Storage.Kafka.KafkaTopic
-			ubPlugin = kafka.NewUserBehaviorPlugin(kafka.UserBehaviorPluginConfig{
+			siuPlugin = kafka.NewStatItemUpdatedPlugin(kafka.StatItemUpdatedPluginConfig{
 				Brokers:       brokers,
-				Topic:         baseTopic + ".user_behavior",
-				Compression:   appCfg.Storage.Kafka.KafkaCompression,
-				BatchSize:     appCfg.Storage.Kafka.BatchSize,
-				FlushInterval: appCfg.Storage.Kafka.FlushInterval,
-			})
-			gpPlugin = kafka.NewGameplayPlugin(kafka.GameplayPluginConfig{
-				Brokers:       brokers,
-				Topic:         baseTopic + ".gameplay",
-				Compression:   appCfg.Storage.Kafka.KafkaCompression,
-				BatchSize:     appCfg.Storage.Kafka.BatchSize,
-				FlushInterval: appCfg.Storage.Kafka.FlushInterval,
-			})
-			perfPlugin = kafka.NewPerformancePlugin(kafka.PerformancePluginConfig{
-				Brokers:       brokers,
-				Topic:         baseTopic + ".performance",
+				Topic:         baseTopic + ".stat_item_updated",
 				Compression:   appCfg.Storage.Kafka.KafkaCompression,
 				BatchSize:     appCfg.Storage.Kafka.BatchSize,
 				FlushInterval: appCfg.Storage.Kafka.FlushInterval,
 			})
 
 		case "mongodb":
-			ubPlugin = mongodb.NewUserBehaviorPlugin(mongodb.UserBehaviorPluginConfig{
+			siuPlugin = mongodb.NewStatItemUpdatedPlugin(mongodb.StatItemUpdatedPluginConfig{
 				URI:        appCfg.Storage.MongoDB.MongoURI,
 				Database:   appCfg.Storage.MongoDB.MongoDatabase,
-				Collection: "user_behavior_events",
-				Workers:    appCfg.Storage.MongoDB.Workers,
-			})
-			gpPlugin = mongodb.NewGameplayPlugin(mongodb.GameplayPluginConfig{
-				URI:        appCfg.Storage.MongoDB.MongoURI,
-				Database:   appCfg.Storage.MongoDB.MongoDatabase,
-				Collection: "gameplay_events",
-				Workers:    appCfg.Storage.MongoDB.Workers,
-			})
-			perfPlugin = mongodb.NewPerformancePlugin(mongodb.PerformancePluginConfig{
-				URI:        appCfg.Storage.MongoDB.MongoURI,
-				Database:   appCfg.Storage.MongoDB.MongoDatabase,
-				Collection: "performance_events",
+				Collection: "stat_item_updated_events",
 				Workers:    appCfg.Storage.MongoDB.Workers,
 			})
 
 		case "noop":
-			ubPlugin = noop.NewNoopPlugin[*events.UserBehaviorEvent]()
-			gpPlugin = noop.NewNoopPlugin[*events.GameplayEvent]()
-			perfPlugin = noop.NewNoopPlugin[*events.PerformanceEvent]()
+			siuPlugin = noop.NewNoopPlugin[*events.StatItemUpdatedEvent]()
 
 		default:
 			logger.Error("unknown plugin", "plugin", pluginName)
@@ -138,62 +82,32 @@ func InitializeStoragePlugins(ctx context.Context, appCfg *config.Config, logger
 		}
 
 		// Initialize all plugins
-		if err := ubPlugin.Initialize(ctx); err != nil {
+
+		if err := siuPlugin.Initialize(ctx); err != nil {
 			return nil, err
 		}
-		logger.Info("plugin initialized", "plugin", ubPlugin.Name())
+		logger.Info("plugin initialized", "plugin", siuPlugin.Name())
 
-		if err := gpPlugin.Initialize(ctx); err != nil {
-			return nil, err
-		}
-		logger.Info("plugin initialized", "plugin", gpPlugin.Name())
-
-		if err := perfPlugin.Initialize(ctx); err != nil {
-			return nil, err
-		}
-		logger.Info("plugin initialized", "plugin", perfPlugin.Name())
-
-		plugins.UserBehavior = append(plugins.UserBehavior, ubPlugin)
-		plugins.Gameplay = append(plugins.Gameplay, gpPlugin)
-		plugins.Performance = append(plugins.Performance, perfPlugin)
+		plugins.StatItemUpdated = append(plugins.StatItemUpdated, siuPlugin)
 	}
 
-	if len(plugins.UserBehavior) == 0 {
+	if len(plugins.StatItemUpdated) == 0 {
 		logger.Warn("no storage plugins enabled, using noop")
-		noopUB := noop.NewNoopPlugin[*events.UserBehaviorEvent]()
-		noopUB.Initialize(ctx)
-		plugins.UserBehavior = append(plugins.UserBehavior, noopUB)
 
-		noopGP := noop.NewNoopPlugin[*events.GameplayEvent]()
-		noopGP.Initialize(ctx)
-		plugins.Gameplay = append(plugins.Gameplay, noopGP)
-
-		noopPerf := noop.NewNoopPlugin[*events.PerformanceEvent]()
-		noopPerf.Initialize(ctx)
-		plugins.Performance = append(plugins.Performance, noopPerf)
+		noopSIU := noop.NewNoopPlugin[*events.StatItemUpdatedEvent]()
+		noopSIU.Initialize(ctx)
+		plugins.StatItemUpdated = append(plugins.StatItemUpdated, noopSIU)
 	}
 
 	logger.Info("storage plugins ready",
-		"user_behavior", len(plugins.UserBehavior),
-		"gameplay", len(plugins.Gameplay),
-		"performance", len(plugins.Performance))
+		"stat_item_updated", len(plugins.StatItemUpdated))
 
 	return plugins, nil
 }
 
 // CloseStoragePlugins closes all storage plugins gracefully
 func CloseStoragePlugins(plugins *StoragePlugins, logger *slog.Logger) {
-	for _, p := range plugins.UserBehavior {
-		if err := p.Close(); err != nil {
-			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
-		}
-	}
-	for _, p := range plugins.Gameplay {
-		if err := p.Close(); err != nil {
-			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
-		}
-	}
-	for _, p := range plugins.Performance {
+	for _, p := range plugins.StatItemUpdated {
 		if err := p.Close(); err != nil {
 			logger.Error("failed to close plugin", "plugin", p.Name(), "error", err)
 		}
