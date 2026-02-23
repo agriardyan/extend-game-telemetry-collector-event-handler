@@ -1,6 +1,6 @@
 # Extend Game Telemetry Collector Event Handler
 
-A plugin-based [Extend Event Handler](https://docs.accelbyte.io/gaming-services/modules/foundations/extend/event-handler/) app for collecting, processing, and storing game telemetry events to one or more storage backends. It exposes a dual-protocol API (gRPC + REST) and routes events through a typed storage plugin system. 
+A plugin-based [Extend Event Handler](https://docs.accelbyte.io/gaming-services/modules/foundations/extend/event-handler/) app for collecting, processing, and storing game telemetry events to one or more storage backends. It exposes a gRPC API to receive AGS events and routes events through a typed storage plugin system. 
 
 ---
 
@@ -8,13 +8,13 @@ A plugin-based [Extend Event Handler](https://docs.accelbyte.io/gaming-services/
 
 When it comes to telemetry collection, one size does not fit all. Different games have different event schemas, different processing needs, and different storage backends. Even within the same game, you might want to route different event types to different destinations — for example, sending gameplay events to PostgreSQL, while streaming performance metrics to Kafka.
 
-We believe giving control to developers is the best way to enable creativity. This app is not a one-size-fits-all solution; it's a flexible framework that you can extend and customize to fit your game's unique telemetry needs. Whether you want to add new telemetry types, implement custom storage backends, or apply specific filtering and transformation logic, this app provides the foundation for you to build on.
+We believe giving control to developers is the best way to enable creativity. This app is not a one-size-fits-all solution; it's a flexible framework that you can extend and customize to fit your game's unique telemetry needs. Whether you want to add new AGS event, implement custom storage backends, or apply specific filtering and transformation logic, this app provides the foundation for you to build on.
 
 ## Flexibility by Design
 
 | What you control | How |
 |---|---|
-| **Endpoint shape** | Define your own protobuf messages and gRPC/HTTP routes |
+| **Endpoint shape** | Choose the protobuf from [AGS event definitions](https://docs.accelbyte.io/gaming-services/knowledge-base/api-events/achievement/) |
 | **Event filtering** | Implement `Filter()` per plugin — drop, sample, or gate events with plain Go |
 | **Data transformation** | Implement your own transformation inside `WriteBatch()` — reshape, enrich, or redact before writing |
 | **Storage destination** | Enable one or more backends: S3, PostgreSQL, Kafka, MongoDB, or a custom implementation |
@@ -31,7 +31,7 @@ Multiple storage plugins run in parallel. A single event stream can go to a data
 ┌───────────────────────────────────────────────────────────────┐
 │                        Game Clients                           │
 └────────────────────────────┬──────────────────────────────────┘
-                             │  gRPC  /  HTTP REST (gRPC-Gateway)
+                             │  gRPC (gRPC-Gateway)
                              ▼
 ┌───────────────────────────────────────────────────────────────┐
 │  API Layer                                                    │
@@ -104,15 +104,13 @@ On shutdown, each processor drains its remaining events before closing, so no in
 
 ## Built-in Telemetry Types
 
-Three telemetry categories come out of the box, each processed by its own independent pipeline. Adjust the `pkg/proto/service.proto` file to add or modify endpoint definitions and then generate the corresponding Go code.
+Two telemetry categories come out of the box, each processed by its own independent pipeline. Add or remove the proto file at `pkg/proto/accelbyte-asyncapi` directory based on AGS Event proto file definitions and then generate the corresponding Go code.
 
 | Type | Description |
 |---|---|
-| `UserBehavior` | Player actions, UI interactions, session events |
-| `Gameplay` | In-game events — deaths, level completions, combat, etc. |
-| `Performance` | Frame rates, latency, memory, crash reports |
+| `StatisticStatItemUpdatedService` | Statistic item update for each user |
 
-Each type has its own processor, deduplicator, and plugin slice, so a spike in gameplay events never delays performance metrics.
+Each type has its own processor, deduplicator, and plugin slice, so a spike in one events never delays others processing.
 
 ---
 
@@ -178,7 +176,6 @@ The service starts three listeners:
 | Port | Protocol | Purpose |
 |---|---|---|
 | `6565` | gRPC | Primary API |
-| `8000` | HTTP | REST gateway + Swagger UI (`/telemetry/apidocs/`) |
 | `8080` | HTTP | Prometheus metrics (`/metrics`) |
 
 ### 4. Send a test event
