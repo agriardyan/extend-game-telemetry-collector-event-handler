@@ -1,0 +1,60 @@
+services:
+  # redis:
+  #   image: redis:7.2-alpine3.20
+  #   ports:
+  #     - "6379:6379"
+  #   command: redis-server --requirepass ""
+  #   restart: always
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+
+  mongodb:
+    image: mongo:7.0.30-jammy
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    restart: always
+    healthcheck:
+      test: ["CMD", "mongo", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgres:
+    image: postgres:14.21-alpine3.22
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: telemetry
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    # environment:
+    #   MINIO_ROOT_USER: minioadmin
+    #   MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+
+  

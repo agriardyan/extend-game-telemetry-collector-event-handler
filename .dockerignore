@@ -1,0 +1,9 @@
+Dockerfile
+Makefile
+pkg/pb
+.cache/
+
+bin/*
+docs/*
+demo/*
+.old.git/*

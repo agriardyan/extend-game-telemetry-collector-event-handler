@@ -1,0 +1,564 @@
+// Copyright (c) 2025 AccelByte Inc. All Rights Reserved.
+// This is licensed software from AccelByte Inc, for limitations
+// and restrictions contact your company contract manager.
+
+// source: Social/AsyncAPI/statistic.yaml (0.1.0)
+
+syntax = "proto3";
+
+package accelbyte.social.statistic.v1;
+// Version v1.0.0
+
+// --- imports ---
+
+import "google/protobuf/any.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/struct.proto";
+
+// --- options ---
+
+option csharp_namespace = "AccelByte.Social.Statistic";
+option go_package = "accelbyte.net/social/statistic";
+option java_multiple_files = true;
+option java_package = "net.accelbyte.social.statistic";
+
+// --- schema objects ---
+
+// path: #/components/schemas/event
+message Event {
+    string id = 1 [json_name = "id"];
+    int64 version = 2 [json_name = "version"];
+    string name = 3 [json_name = "name"];
+    string namespace = 4 [json_name = "namespace"];
+    string parent_namespace = 5 [json_name = "parentNamespace"];
+    string timestamp = 6 [json_name = "timestamp"];
+    string client_id = 7 [json_name = "clientId"];
+    string user_id = 8 [json_name = "userId"];
+    string session_id = 9 [json_name = "sessionId"];
+}
+
+// path: #/components/schemas/stat
+message Stat {
+    string namespace = 1 [json_name = "namespace"];
+    string stat_code = 2 [json_name = "statCode"];
+    string status = 3 [json_name = "status"];
+    string name = 4 [json_name = "name"];
+    string description = 5 [json_name = "description"];
+    double maximum = 6 [json_name = "maximum"];
+    double minimum = 7 [json_name = "minimum"];
+    int64 default_value = 8 [json_name = "defaultValue"];
+    bool increment_only = 9 [json_name = "incrementOnly"];
+    bool set_as_global = 10 [json_name = "setAsGlobal"];
+    string set_by = 11 [json_name = "setBy"];
+    map<string, string> tags = 12 [json_name = "tags"];
+    string created_at = 13 [json_name = "createdAt"];
+    string updated_at = 14 [json_name = "updatedAt"];
+    bool ignore_additional_data_on_value_rejected = 15 [json_name = "ignoreAdditionalDataOnValueRejected"];
+}
+
+// path: #/components/schemas/statExport
+message StatExport {
+    string namespace = 1 [json_name = "namespace"];
+    repeated string stat_codes = 2 [json_name = "statCodes"];
+}
+
+// path: #/components/schemas/statImport
+message StatImport {
+    string namespace = 1 [json_name = "namespace"];
+    repeated string replaced_stat_codes = 2 [json_name = "replacedStatCodes"];
+    repeated string ignored_stat_codes = 3 [json_name = "ignoredStatCodes"];
+    repeated string new_stat_codes = 4 [json_name = "newStatCodes"];
+    repeated string failed_stat_codes = 5 [json_name = "failedStatCodes"];
+}
+
+// path: #/components/schemas/statItem
+message StatItem {
+    string namespace = 1 [json_name = "namespace"];
+    string stat_code = 2 [json_name = "statCode"];
+    string user_id = 3 [json_name = "userId"];
+    double latest_value = 4 [json_name = "latestValue"];
+    double inc = 5 [json_name = "inc"];
+    google.protobuf.Struct additional_data = 6 [json_name = "additionalData"];
+    bool ignore_additional_data_on_value_rejected = 7 [json_name = "ignoreAdditionalDataOnValueRejected"];
+    double default_value = 8 [json_name = "defaultValue"];
+    double request_value = 9 [json_name = "requestValue"];
+    string update_strategy = 10 [json_name = "updateStrategy"];
+}
+
+// path: #/components/schemas/globalStatItem
+message GlobalStatItem {
+    string namespace = 1 [json_name = "namespace"];
+    string stat_code = 2 [json_name = "statCode"];
+    double latest_value = 3 [json_name = "latestValue"];
+    double inc = 4 [json_name = "inc"];
+}
+
+// path: #/components/schemas/statCycle
+message StatCycle {
+    string id = 1 [json_name = "id"];
+    string namespace = 2 [json_name = "namespace"];
+    string cycle_type = 3 [json_name = "cycleType"];
+    string reset_time = 4 [json_name = "resetTime"];
+    int64 reset_day = 5 [json_name = "resetDay"];
+    int64 reset_date = 6 [json_name = "resetDate"];
+    int64 reset_month = 7 [json_name = "resetMonth"];
+    int64 season_period = 8 [json_name = "seasonPeriod"];
+    int64 current_version = 9 [json_name = "currentVersion"];
+    string status = 10 [json_name = "status"];
+    string next_reset = 11 [json_name = "nextReset"];
+    string start = 12 [json_name = "start"];
+    string end = 13 [json_name = "end"];
+    string created_at = 14 [json_name = "createdAt"];
+    string updated_at = 15 [json_name = "updatedAt"];
+}
+
+// path: #/components/schemas/statCycleItem
+message StatCycleItem {
+    string namespace = 1 [json_name = "namespace"];
+    string cycle_id = 2 [json_name = "cycleId"];
+    string stat_code = 3 [json_name = "statCode"];
+    string user_id = 4 [json_name = "userId"];
+    string update_strategy = 5 [json_name = "updateStrategy"];
+    int64 cycle_version = 6 [json_name = "cycleVersion"];
+    double latest_value = 7 [json_name = "latestValue"];
+    double update_value = 8 [json_name = "updateValue"];
+}
+
+// path: #/components/messages/statCreated/payload
+message StatCreated {
+    Stat payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statDeleted/payload
+message StatDeleted {
+    Stat payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statUpdated/payload
+message StatUpdated {
+    Stat payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statImported/payload
+message StatImported {
+    StatImport payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statExported/payload
+message StatExported {
+    StatExport payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statItemCreated/payload
+message StatItemCreated {
+    StatItem payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statItemUpdated/payload
+message StatItemUpdated {
+    StatItem payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statItemDeleted/payload
+message StatItemDeleted {
+    StatItem payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/globalStatItemUpdated/payload
+message GlobalStatItemUpdated {
+    GlobalStatItem payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statCycleCreated/payload
+message StatCycleCreated {
+    StatCycle payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statCycleUpdated/payload
+message StatCycleUpdated {
+    StatCycle payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statCycleDeleted/payload
+message StatCycleDeleted {
+    StatCycle payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statCycleReset/payload
+message StatCycleReset {
+    StatCycle payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statItemCycleCreated/payload
+message StatItemCycleCreated {
+    StatCycleItem payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+// path: #/components/messages/statItemCycleUpdated/payload
+message StatItemCycleUpdated {
+    StatCycleItem payload = 1 [json_name = "payload"];
+
+    // allOf(#/components/schemas/event)
+    string id = 2 [json_name = "id"];
+    int64 version = 3 [json_name = "version"];
+    string name = 4 [json_name = "name"];
+    string namespace = 5 [json_name = "namespace"];
+    string parent_namespace = 6 [json_name = "parentNamespace"];
+    string timestamp = 7 [json_name = "timestamp"];
+    string client_id = 8 [json_name = "clientId"];
+    string user_id = 9 [json_name = "userId"];
+    string session_id = 10 [json_name = "sessionId"];
+}
+
+
+// --- #/components/messages/{message_name} ---
+
+// path: #/components/messages/statCreated
+message StatCreatedMessage {
+    StatCreated payload = 1;
+}
+
+// path: #/components/messages/statDeleted
+message StatDeletedMessage {
+    StatDeleted payload = 1;
+}
+
+// path: #/components/messages/statUpdated
+message StatUpdatedMessage {
+    StatUpdated payload = 1;
+}
+
+// path: #/components/messages/statImported
+message StatImportedMessage {
+    StatImported payload = 1;
+}
+
+// path: #/components/messages/statExported
+message StatExportedMessage {
+    StatExported payload = 1;
+}
+
+// path: #/components/messages/statItemCreated
+message StatItemCreatedMessage {
+    StatItemCreated payload = 1;
+}
+
+// path: #/components/messages/statItemUpdated
+message StatItemUpdatedMessage {
+    StatItemUpdated payload = 1;
+}
+
+// path: #/components/messages/statItemDeleted
+message StatItemDeletedMessage {
+    StatItemDeleted payload = 1;
+}
+
+// path: #/components/messages/globalStatItemUpdated
+message GlobalStatItemUpdatedMessage {
+    GlobalStatItemUpdated payload = 1;
+}
+
+// path: #/components/messages/statCycleCreated
+message StatCycleCreatedMessage {
+    StatCycleCreated payload = 1;
+}
+
+// path: #/components/messages/statCycleUpdated
+message StatCycleUpdatedMessage {
+    StatCycleUpdated payload = 1;
+}
+
+// path: #/components/messages/statCycleDeleted
+message StatCycleDeletedMessage {
+    StatCycleDeleted payload = 1;
+}
+
+// path: #/components/messages/statCycleReset
+message StatCycleResetMessage {
+    StatCycleReset payload = 1;
+}
+
+// path: #/components/messages/statItemCycleCreated
+message StatItemCycleCreatedMessage {
+    StatItemCycleCreated payload = 1;
+}
+
+// path: #/components/messages/statItemCycleUpdated
+message StatItemCycleUpdatedMessage {
+    StatItemCycleUpdated payload = 1;
+}
+
+
+// --- #/channels/{channel_name}/{operation_type}/message ---
+
+// path: #/channels/statManagement/publish/message
+message StatManagementPublish {
+    oneof payload {
+        StatCreatedMessage variant0 = 1;
+        StatDeletedMessage variant1 = 2;
+        StatUpdatedMessage variant2 = 3;
+        StatImportedMessage variant3 = 4;
+        StatExportedMessage variant4 = 5;
+    }
+}
+
+// path: #/channels/statistic/publish/message
+message StatisticPublish {
+    oneof payload {
+        StatItemCreatedMessage variant0 = 1;
+        StatItemUpdatedMessage variant1 = 2;
+        StatItemDeletedMessage variant2 = 3;
+        GlobalStatItemUpdatedMessage variant3 = 4;
+    }
+}
+
+// path: #/channels/statCycleManagement/publish/message
+message StatCycleManagementPublish {
+    oneof payload {
+        StatCycleCreatedMessage variant0 = 1;
+        StatCycleUpdatedMessage variant1 = 2;
+        StatCycleResetMessage variant2 = 3;
+        StatCycleDeletedMessage variant3 = 4;
+    }
+}
+
+// path: #/channels/statisticCycle/publish/message
+message StatisticCyclePublish {
+    oneof payload {
+        StatItemCycleCreatedMessage variant0 = 1;
+        StatItemCycleUpdatedMessage variant1 = 2;
+    }
+}
+
+
+// --- service ---
+
+
+// Publishes a StatCreated to the Stat Management channel. (oneOf variant) (statManagement StatCreated)
+service StatManagementStatCreatedService {
+    rpc OnMessage(StatCreated) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatDeleted to the Stat Management channel. (oneOf variant) (statManagement StatDeleted)
+service StatManagementStatDeletedService {
+    rpc OnMessage(StatDeleted) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatUpdated to the Stat Management channel. (oneOf variant) (statManagement StatUpdated)
+service StatManagementStatUpdatedService {
+    rpc OnMessage(StatUpdated) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatImported to the Stat Management channel. (oneOf variant) (statManagement StatImported)
+service StatManagementStatImportedService {
+    rpc OnMessage(StatImported) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatExported to the Stat Management channel. (oneOf variant) (statManagement StatExported)
+service StatManagementStatExportedService {
+    rpc OnMessage(StatExported) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatItemCreated to the Statistic channel. (oneOf variant) (statistic StatItemCreated)
+service StatisticStatItemCreatedService {
+    rpc OnMessage(StatItemCreated) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatItemUpdated to the Statistic channel. (oneOf variant) (statistic StatItemUpdated)
+service StatisticStatItemUpdatedService {
+    rpc OnMessage(StatItemUpdated) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatItemDeleted to the Statistic channel. (oneOf variant) (statistic StatItemDeleted)
+service StatisticStatItemDeletedService {
+    rpc OnMessage(StatItemDeleted) returns (google.protobuf.Empty);
+}
+
+// Publishes a GlobalStatItemUpdated to the Statistic channel. (oneOf variant) (statistic GlobalStatItemUpdated)
+service StatisticGlobalStatItemUpdatedService {
+    rpc OnMessage(GlobalStatItemUpdated) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatCycleCreated to the Stat Cycle Management channel. (oneOf variant) (statCycleManagement StatCycleCreated)
+service StatCycleManagementStatCycleCreatedService {
+    rpc OnMessage(StatCycleCreated) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatCycleUpdated to the Stat Cycle Management channel. (oneOf variant) (statCycleManagement StatCycleUpdated)
+service StatCycleManagementStatCycleUpdatedService {
+    rpc OnMessage(StatCycleUpdated) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatCycleReset to the Stat Cycle Management channel. (oneOf variant) (statCycleManagement StatCycleReset)
+service StatCycleManagementStatCycleResetService {
+    rpc OnMessage(StatCycleReset) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatCycleDeleted to the Stat Cycle Management channel. (oneOf variant) (statCycleManagement StatCycleDeleted)
+service StatCycleManagementStatCycleDeletedService {
+    rpc OnMessage(StatCycleDeleted) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatItemCycleCreated to the Statistic Cycle channel. (oneOf variant) (statisticCycle StatItemCycleCreated)
+service StatisticCycleStatItemCycleCreatedService {
+    rpc OnMessage(StatItemCycleCreated) returns (google.protobuf.Empty);
+}
+
+// Publishes a StatItemCycleUpdated to the Statistic Cycle channel. (oneOf variant) (statisticCycle StatItemCycleUpdated)
+service StatisticCycleStatItemCycleUpdatedService {
+    rpc OnMessage(StatItemCycleUpdated) returns (google.protobuf.Empty);
+}

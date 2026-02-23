@@ -1,0 +1,128 @@
+# Game Telemetry Collector - Configuration
+# This file contains default settings for all components
+
+server:
+  grpc_port: 6565
+  http_port: 8000
+  base_path: /telemetry
+  log_level: info
+
+processor:
+  # Number of worker goroutines for async processing
+  workers: 10
+
+  # Buffered channel size for incoming events
+  channel_buffer: 10000
+
+  # Default batch settings (can be overridden per plugin)
+  default_batch_size: 100
+  default_flush_interval: 5s
+
+deduplication:
+  # Enable/disable deduplication
+  enabled: false
+
+  # Deduplication type: "memory" (single instance), "redis" (distributed), or "noop" (disabled)
+  type: noop
+
+  # How long to remember events (prevents duplicates within this window)
+  ttl: 1h
+
+  # Redis configuration (only used when type is "redis")
+  redis:
+    addr: localhost:6379
+    password: ""
+    db: 0
+
+storage:
+  plugins:
+    # No-op plugin for testing (discards all events)
+    - name: noop
+      enabled: true
+      batch_size: 100
+      flush_interval: 5s
+      workers: 2
+      retry:
+        max_retries: 3
+        initial_backoff: 100ms
+        max_backoff: 10s
+        multiplier: 2.0
+      settings: {}
+
+    # ===== S3 Plugin =====
+    # Stores telemetry as JSON files in Amazon S3
+    # Files are partitioned by namespace/year/month/day for efficient querying
+    # Requires AWS credentials (via environment variables or IAM role)
+    - name: s3
+      enabled: false
+      batch_size: 500           # Events per file
+      flush_interval: 10s       # Max time before creating new file
+      workers: 5
+      retry:
+        max_retries: 5
+        initial_backoff: 500ms
+        max_backoff: 30s
+        multiplier: 2.0
+      settings:
+        bucket: game-telemetry-prod    # S3 bucket name
+        prefix: telemetry              # Path prefix
+        region: us-east-1              # AWS region
+
+    # ===== PostgreSQL Plugin =====
+    # Stores telemetry in a PostgreSQL database
+    # Uses JSONB for flexible property storage
+    # Creates table and indexes automatically
+    - name: postgres
+      enabled: false
+      batch_size: 200           # Events per INSERT batch
+      flush_interval: 5s
+      workers: 8                # Concurrent database connections
+      retry:
+        max_retries: 3
+        initial_backoff: 200ms
+        max_backoff: 10s
+        multiplier: 2.0
+      settings:
+        dsn: "postgres://user:password@localhost:5432/telemetry?sslmode=disable"
+        table: telemetry_events
+
+    # ===== Kafka Plugin =====
+    # Streams telemetry events to Apache Kafka
+    # Messages are partitioned by user_id for ordered processing
+    # Supports compression for efficiency
+    - name: kafka
+      enabled: false
+      batch_size: 1000          # Events per Kafka batch
+      flush_interval: 1s        # Max latency for real-time streaming
+      workers: 3
+      retry:
+        max_retries: 10
+        initial_backoff: 100ms
+        max_backoff: 5s
+        multiplier: 1.5
+      settings:
+        brokers:
+          - localhost:9092
+          # - kafka-2.example.com:9092
+          # - kafka-3.example.com:9092
+        topic: game-telemetry
+        compression: snappy     # Options: snappy, gzip, lz4, zstd
+
+    # ===== MongoDB Plugin =====
+    # Stores telemetry in MongoDB/DocumentDB (AWS)
+    # Flexible schema with automatic index creation
+    # Perfect for schema-less telemetry with rich queries
+    - name: mongodb
+      enabled: false
+      batch_size: 500           # Events per batch insert
+      flush_interval: 5s
+      workers: 5
+      retry:
+        max_retries: 3
+        initial_backoff: 200ms
+        max_backoff: 10s
+        multiplier: 2.0
+      settings:
+        uri: "mongodb://localhost:27017"
+        database: telemetry     # Database name
+        collection: events      # Collection name
