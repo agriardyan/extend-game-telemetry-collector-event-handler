@@ -52,10 +52,24 @@ func (s *StatItemUpdatedService) OnMessage(ctx context.Context, req *statistic.S
 	}
 
 	event := &events.StatItemUpdatedEvent{
+		ID:              req.Id,
+		Name:            req.Name,
+		SessionID:       req.SessionId,
+		Timestamp:       req.Timestamp,
 		Namespace:       namespace,
 		UserID:          req.UserId,
 		ServerTimestamp: time.Now().UnixMilli(),
-		Payload:         req,
+		Payload: &events.StatItem{
+			StatCode:                            req.Payload.GetStatCode(),
+			UserId:                              req.Payload.GetUserId(),
+			LatestValue:                         req.Payload.GetLatestValue(),
+			Inc:                                 req.Payload.GetInc(),
+			AdditionalData:                      req.Payload.GetAdditionalData().AsMap(),
+			IgnoreAdditionalDataOnValueRejected: req.Payload.GetIgnoreAdditionalDataOnValueRejected(),
+			DefaultValue:                        req.Payload.GetDefaultValue(),
+			RequestValue:                        req.Payload.GetRequestValue(),
+			UpdateStrategy:                      req.Payload.GetUpdateStrategy(),
+		},
 	}
 
 	if err := s.proc.Submit(event); err != nil {
